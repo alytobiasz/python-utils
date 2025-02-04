@@ -12,27 +12,22 @@ Output:
     Creates a directory named 'pdf_extracts_YYYYMMDD_HHMMSS' containing all extracted text files
 
 Requirements:
-    pip install pdfplumber
+    pip install PyMuPDF
 """
 
-import pdfplumber
 import argparse
 import time
 from datetime import datetime
 import os
+import fitz  # PyMuPDF
 
 def extract_text_from_pdf_file(pdf_path):
     try:
-        # Open and read the PDF file
-        with pdfplumber.open(pdf_path) as pdf:
-            # Extract text from all pages
+        with fitz.open(pdf_path) as pdf:
             text = ""
-            for page in pdf.pages:
-                extracted = page.extract_text() or ""
-                if extracted:
-                    text += extracted + "\n\n"  # Add two newlines between pages
-                
-            return text.strip()  # Return text with original case preserved
+            for page in pdf:
+                text += page.get_text() + "\n\n"
+            return text.strip()
     
     except FileNotFoundError:
         print(f"Error: File not found at '{pdf_path}'")
