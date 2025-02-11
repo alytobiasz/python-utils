@@ -47,6 +47,7 @@ from datetime import datetime
 from openpyxl import load_workbook
 from pdfrw import PdfReader, PdfWriter, PdfDict, PdfName, PdfObject
 import fitz
+import pymupdf
 import time
 
 def read_excel_data(excel_path):
@@ -134,6 +135,7 @@ def fill_pdf_form(template_path, data_row, temp_output_path):
 
 def flatten_fields(input_path, output_path, fields_to_flatten):
     """Flatten specified fields using PyMuPDF."""
+    pymupdf.TOOLS.mupdf_display_errors(False)
     doc = None
     try:
         # Open the filled PDF
