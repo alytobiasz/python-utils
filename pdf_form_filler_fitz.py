@@ -98,9 +98,20 @@ def read_fields_to_flatten(fields_file):
 
 def fill_pdf_form(template_path, data_row, output_path, fields_to_flatten):
     """Fill a single PDF form and flatten specified fields."""
+    doc = None
     try:
+        # Verify template exists
+        if not os.path.exists(template_path):
+            print(f"Error: PDF template not found at '{template_path}'")
+            return False
+
         # Open the PDF template
         doc = fitz.open(template_path)
+        if doc.page_count == 0:
+            print("Error: PDF template appears to be empty")
+            return False
+            
+        print(f"Opened PDF template with {doc.page_count} pages")
         
         # Get form fields
         form_fields = {}
@@ -127,6 +138,7 @@ def fill_pdf_form(template_path, data_row, output_path, fields_to_flatten):
             print("Field names found:", ", ".join(form_fields.keys()))
             
             # Fill form fields
+            fields_filled = 0
             for field_name, value in data_row.items():
                 if field_name in form_fields:
                     # Handle empty values
@@ -138,6 +150,7 @@ def fill_pdf_form(template_path, data_row, output_path, fields_to_flatten):
                         field.field_value = str_value
                         field.update()
                         print(f"Successfully filled field: {field_name} with value: {str_value}")
+                        fields_filled += 1
                         
                         # Flatten this field if it's in the list
                         if field_name in fields_to_flatten:
@@ -167,17 +180,39 @@ def fill_pdf_form(template_path, data_row, output_path, fields_to_flatten):
                         print(f"Error filling field '{field_name}': {field_error}")
                 else:
                     print(f"Warning: Field '{field_name}' not found in PDF form")
+            
+            print(f"\nFilled {fields_filled} fields out of {len(data_row)} available fields")
+        
+        # Create output directory if it doesn't exist
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
         
         # Save the filled PDF
-        doc.save(output_path)
+        print(f"\nSaving PDF to: {output_path}")
+        doc.save(output_path, garbage=4, deflate=True, clean=True)
         doc.close()
-        return True
+        
+        # Verify the file was created
+        if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+            print(f"Successfully saved PDF: {output_path} ({os.path.getsize(output_path)} bytes)")
+            return True
+        else:
+            print(f"Error: Failed to create output PDF or file is empty: {output_path}")
+            return False
         
     except Exception as e:
-        print(f"Error filling PDF form: {e}")
-        if 'doc' in locals():
-            doc.close()
+        print(f"Error filling PDF form: {str(e)}")
+        import traceback
+        print("Traceback:")
+        print(traceback.format_exc())
         return False
+        
+    finally:
+        # Always close the document
+        if doc:
+            try:
+                doc.close()
+            except:
+                pass
 
 def main():
     if len(sys.argv) not in [4, 5]:
