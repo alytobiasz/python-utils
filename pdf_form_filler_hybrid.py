@@ -245,6 +245,8 @@ def flatten_fields(input_path, output_path, fields_to_flatten):
             try:
                 doc.close()
                 doc = None
+                import gc
+                gc.collect()  # Force garbage collection
             except:
                 pass
 
@@ -262,6 +264,10 @@ def process_pdf(template_path, data_row, output_path, fields_to_flatten):
             if not flatten_fields(temp_path, output_path, fields_to_flatten):
                 print("Failed to flatten fields")
                 return False
+            # Force garbage collection after flattening
+            import gc
+            gc.collect()
+            time.sleep(0.2)  # Give system time to release resources
         else:
             # If no fields to flatten, just rename the temp file
             try:
@@ -277,13 +283,13 @@ def process_pdf(template_path, data_row, output_path, fields_to_flatten):
     finally:
         # Always try to remove the temp file with retries
         if os.path.exists(temp_path):
-            for delay in [0.1, 0.2, 0.5]:  # Increasing delays
+            for delay in [0.2, 0.5, 1.0]:  # Longer delays
                 try:
                     time.sleep(delay)
                     os.remove(temp_path)
                     break  # Success, exit the retry loop
                 except Exception as e:
-                    if delay == 0.5:  # Only print warning on last attempt
+                    if delay == 1.0:  # Only print warning on last attempt
                         print(f"Warning: Could not remove temporary file {temp_path}: {e}")
 
 def main():
