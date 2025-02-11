@@ -9,16 +9,9 @@ to maintain data privacy. It creates one filled PDF for each row in your Excel f
 
 Requirements:
     - Python 3.6 or higher
-    - Required packages (install using pip):
-        pip install openpyxl pdfrw
-
-Setup:
-    1. Create a virtual environment (recommended):
-       python -m venv .venv
-       source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-    
-    2. Install dependencies:
-       pip install openpyxl pdfrw
+    - Required packages:
+        pip install openpyxl>=3.1.2  # For Excel file handling
+        pip install PyPDF2>=3.0.0    # For PDF form filling
 
 Usage:
     1. Prepare your Excel file:
@@ -47,6 +40,8 @@ Troubleshooting:
     2. Ensure your PDF template has fillable form fields
     3. Verify that all required files exist and are accessible
     4. Check that you have write permissions in the output directory
+    5. If you get PDF errors, make sure you have the latest versions of the required packages:
+       pip install --upgrade openpyxl PyPDF2
 
 License:
     This script is provided as-is under the MIT License.
@@ -56,7 +51,7 @@ import sys
 import os
 from datetime import datetime
 from openpyxl import load_workbook
-from pdfrw import PdfReader, PdfWriter, PdfDict
+from PyPDF2 import PdfReader, PdfWriter
 
 def read_excel_data(excel_path):
     """Read data from Excel file."""
@@ -84,34 +79,31 @@ def fill_pdf_form(template_path, data_row, output_path):
     """Fill a single PDF form with data."""
     try:
         # Read the PDF template
-        template = PdfReader(template_path)
-        
-        # Ensure we have form fields to work with
-        if not template.Root.AcroForm:
-            print("Error: No form fields found in PDF template")
-            return False
+        with open(template_path, 'rb') as file:
+            reader = PdfReader(file)
+            writer = PdfWriter()
             
-        # Set NeedAppearances flag first
-        template.Root.AcroForm.update(PdfDict(NeedAppearances=True))
-        
-        # Fill in the form fields
-        for field_name, value in data_row.items():
-            if template.Root.AcroForm.Fields:
-                for field in template.Root.AcroForm.Fields:
-                    if field.T and field.T[1:-1] == field_name:
-                        # Handle empty values (None, empty string, or whitespace)
-                        if value is None or str(value).strip() == '':
-                            field.V = ''
-                        else:
-                            field.V = str(value).strip()
-                        
-                        # Clear any existing appearance streams
-                        field.AP = ''
-        
-        # Write the filled PDF
-        writer = PdfWriter()
-        writer.write(output_path, template)
-        return True
+            # Get the first page (assuming single page form)
+            page = reader.pages[0]
+            writer.add_page(page)
+            
+            # Get form fields
+            if '/AcroForm' not in reader.trailer['/Root']:
+                print("Error: No form fields found in PDF template")
+                return False
+                
+            # Update form fields
+            writer.update_page_form_field_values(
+                writer.pages[0],
+                {k: (str(v).strip() if v is not None else '') for k, v in data_row.items()}
+            )
+            
+            # Write the filled PDF
+            with open(output_path, 'wb') as output_file:
+                writer.write(output_file)
+            
+            return True
+            
     except Exception as e:
         print(f"Error filling PDF form: {e}")
         return False
