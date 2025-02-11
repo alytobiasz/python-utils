@@ -225,7 +225,6 @@ def flatten_fields(input_path, output_path, fields_to_flatten):
         
         # Save the modified PDF
         doc.save(output_path, garbage=4, deflate=True, clean=True)
-        doc.close()
         
         # Verify the file was saved
         if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
