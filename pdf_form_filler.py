@@ -83,20 +83,45 @@ def fill_pdf_form(template_path, data_row, output_path):
             reader = PdfReader(file)
             writer = PdfWriter()
             
-            # Get the first page (assuming single page form)
-            page = reader.pages[0]
-            writer.add_page(page)
+            # Copy all pages from the template
+            for page in reader.pages:
+                writer.add_page(page)
             
             # Get form fields
             if '/AcroForm' not in reader.trailer['/Root']:
                 print("Error: No form fields found in PDF template")
                 return False
-                
-            # Update form fields
+            
+            # Get all form fields from the PDF
+            form_fields = reader.get_fields()
+            if not form_fields:
+                print("Warning: No form fields found in PDF")
+            else:
+                print(f"Found {len(form_fields)} form fields in PDF")
+            
+            # Create a dictionary of field mappings, handling potential missing fields
+            field_values = {}
+            for field_name, value in data_row.items():
+                if field_name in form_fields:
+                    # Handle empty values
+                    if value is None or str(value).strip() == '':
+                        field_values[field_name] = ''
+                    else:
+                        field_values[field_name] = str(value).strip()
+                else:
+                    print(f"Warning: Field '{field_name}' not found in PDF form")
+            
+            # Update form fields and force appearance generation
             writer.update_page_form_field_values(
-                writer.pages[0],
-                {k: (str(v).strip() if v is not None else '') for k, v in data_row.items()}
+                writer.pages[0],  # This actually updates fields across all pages
+                field_values,
             )
+            
+            # Set need appearances flag to force field appearance generation
+            writer._root_object['/AcroForm'].update({
+                '/NeedAppearances': True,
+                '/DA': '/Helv 0 Tf 0 g'  # Default appearance string
+            })
             
             # Write the filled PDF
             with open(output_path, 'wb') as output_file:
