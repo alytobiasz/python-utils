@@ -103,7 +103,12 @@ def fill_pdf_form(template_path, data_row, output_path, fields_to_flatten):
         doc = fitz.open(template_path)
         
         # Get form fields
-        form_fields = doc.get_form_text_fields()
+        form_fields = {}
+        for page in doc:
+            for field in page.widgets():
+                if field.field_type == 3:  # Text field
+                    form_fields[field.field_name] = field
+        
         if not form_fields:
             print("Warning: No form fields found in PDF")
         else:
@@ -114,21 +119,26 @@ def fill_pdf_form(template_path, data_row, output_path, fields_to_flatten):
                 if field_name in form_fields:
                     # Handle empty values
                     str_value = str(value).strip() if value is not None else ''
-                    doc.set_form_text_field(field_name, str_value)
+                    field = form_fields[field_name]
+                    field.field_value = str_value
+                    field.update()
                     
                     # Flatten this field if it's in the list
                     if field_name in fields_to_flatten:
-                        widgets = doc.get_form_text_widgets(field_name)
-                        for widget in widgets:
-                            # Get the field's current value and appearance
-                            field_value = widget.field_value
-                            if field_value:
-                                # Create text annotation at the field's location
-                                rect = widget.rect
-                                page = doc[widget.page_number]
-                                page.insert_text(rect.br, field_value)
-                                # Remove the form field
-                                widget.reset()
+                        # Get the field's current value and appearance
+                        field_value = field.field_value
+                        if field_value:
+                            # Create text annotation at the field's location
+                            rect = field.rect
+                            page = doc[field.page_number]
+                            page.insert_text(
+                                rect.br, 
+                                field_value,
+                                fontsize=12,
+                                color=(0, 0, 0)  # Black text
+                            )
+                            # Remove the form field
+                            page.delete_widget(field)
                 else:
                     print(f"Warning: Field '{field_name}' not found in PDF form")
         
