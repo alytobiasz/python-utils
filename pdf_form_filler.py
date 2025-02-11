@@ -79,56 +79,61 @@ def fill_pdf_form(template_path, data_row, output_path):
     """Fill a single PDF form with data."""
     try:
         # Read the PDF template
-        with open(template_path, 'rb') as file:
-            reader = PdfReader(file)
-            writer = PdfWriter()
-            
-            # Copy all pages from the template
-            for page in reader.pages:
-                writer.add_page(page)
-            
-            # Get form fields
-            if '/AcroForm' not in reader.trailer['/Root']:
-                print("Error: No form fields found in PDF template")
-                return False
-            
-            # Get all form fields from the PDF
-            form_fields = reader.get_fields()
-            if not form_fields:
-                print("Warning: No form fields found in PDF")
-            else:
-                print(f"Found {len(form_fields)} form fields in PDF")
-            
-            # Create a dictionary of field mappings, handling potential missing fields
-            field_values = {}
-            for field_name, value in data_row.items():
-                if field_name in form_fields:
-                    # Handle empty values
-                    if value is None or str(value).strip() == '':
-                        field_values[field_name] = ''
-                    else:
-                        field_values[field_name] = str(value).strip()
+        reader = PdfReader(template_path)
+        writer = PdfWriter()
+        
+        # Copy all pages from the template
+        for page in reader.pages:
+            writer.add_page(page)
+        
+        # Check if PDF has form fields
+        if reader.get_fields() is None:
+            print("Error: No form fields found in PDF template")
+            return False
+        
+        # Get all form fields from the PDF
+        form_fields = reader.get_fields()
+        if not form_fields:
+            print("Warning: No form fields found in PDF")
+        else:
+            print(f"Found {len(form_fields)} form fields in PDF")
+        
+        # Create a dictionary of field mappings, handling potential missing fields
+        field_values = {}
+        for field_name, value in data_row.items():
+            if field_name in form_fields:
+                # Handle empty values
+                if value is None or str(value).strip() == '':
+                    field_values[field_name] = ''
                 else:
-                    print(f"Warning: Field '{field_name}' not found in PDF form")
-            
-            # Update form fields and force appearance generation
-            writer.update_page_form_field_values(
-                writer.pages[0],  # This actually updates fields across all pages
-                field_values,
-            )
-            
-            # Set need appearances flag to force field appearance generation
-            writer._root_object['/AcroForm'].update({
-                '/NeedAppearances': True,
-                '/DA': '/Helv 0 Tf 0 g'  # Default appearance string
+                    field_values[field_name] = str(value).strip()
+            else:
+                print(f"Warning: Field '{field_name}' not found in PDF form")
+        
+        # Copy form field settings from template
+        if hasattr(reader, 'root') and '/AcroForm' in reader.root:
+            writer._root_object.update({
+                '/AcroForm': reader.root['/AcroForm']
             })
-            
-            # Write the filled PDF
-            with open(output_path, 'wb') as output_file:
-                writer.write(output_file)
-            
-            return True
-            
+        
+        # Update all form fields
+        writer.update_page_form_field_values(
+            writer.pages[0],  # Updates fields across all pages
+            field_values
+        )
+        
+        # Force appearance generation
+        if '/AcroForm' in writer._root_object:
+            writer._root_object['/AcroForm'].update({
+                '/NeedAppearances': True
+            })
+        
+        # Write the filled PDF
+        with open(output_path, 'wb') as output_file:
+            writer.write(output_file)
+        
+        return True
+        
     except Exception as e:
         print(f"Error filling PDF form: {e}")
         return False
