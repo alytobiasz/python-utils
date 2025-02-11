@@ -142,42 +142,98 @@ def flatten_fields(input_path, output_path, fields_to_flatten):
         doc = fitz.open(input_path)
         
         # Process each page
-        for page in doc:
-            # Get all form fields on the page
-            fields = list(page.widgets())
-            for field in fields:
-                if field.field_name in fields_to_flatten:
+        for page_num, page in enumerate(doc):
+            print(f"\nProcessing page {page_num + 1}...")
+            try:
+                # Get form fields (widgets) on the page
+                fields = list(page.widgets())
+                print(f"Found {len(fields)} form fields on page {page_num + 1}")
+                
+                for field in fields:
                     try:
-                        # Get field value and position
-                        field_value = field.field_value
-                        if field_value:
-                            rect = field.rect
+                        # Get field name safely
+                        field_name = getattr(field, 'field_name', None)
+                        if not field_name:
+                            continue
                             
-                            # Get field font size if available, otherwise use default
-                            font_size = getattr(field, 'font_size', 12)
-                            if not font_size or font_size <= 0:
-                                font_size = 12
+                        if field_name in fields_to_flatten:
+                            print(f"Processing field: {field_name}")
                             
-                            # Insert text at the field's position
-                            page.insert_text(
-                                point=rect.tl,  # Top-left position
-                                text=field_value,
-                                fontsize=font_size,
-                                color=(0, 0, 0)  # Black text
-                            )
-                            # Remove the form field
-                            page.delete_widget(field)
-                            print(f"Flattened field: {field.field_name}")
-                    except Exception as e:
-                        print(f"Error flattening field '{field.field_name}': {e}")
+                            # Get field value safely
+                            try:
+                                field_value = field.field_value
+                            except:
+                                try:
+                                    # Alternative way to get value
+                                    field_value = field.text
+                                except:
+                                    print(f"Could not get value for field {field_name}")
+                                    continue
+                            
+                            if field_value:
+                                print(f"Field value: {field_value}")
+                                try:
+                                    # Get field rectangle
+                                    rect = field.rect
+                                    
+                                    # Try to get font size from field
+                                    try:
+                                        font_size = field.font_size
+                                        if not font_size or font_size <= 0:
+                                            font_size = 12
+                                    except:
+                                        font_size = 12
+                                    
+                                    print(f"Using font size: {font_size}")
+                                    
+                                    # Calculate text position (slightly offset from top-left)
+                                    x = rect.x0 + 2  # 2 point offset from left
+                                    y = rect.y0 + font_size  # offset by font size from top
+                                    
+                                    # Insert text at the calculated position
+                                    page.insert_text(
+                                        point=(x, y),
+                                        text=str(field_value),
+                                        fontsize=font_size,
+                                        color=(0, 0, 0)  # Black text
+                                    )
+                                    
+                                    # Try to remove the form field
+                                    try:
+                                        page.delete_widget(field)
+                                        print(f"Successfully flattened field: {field_name}")
+                                    except Exception as e:
+                                        print(f"Warning: Could not delete widget for {field_name}: {e}")
+                                        
+                                except Exception as e:
+                                    print(f"Error processing field '{field_name}': {e}")
+                                    continue
+                    except Exception as field_error:
+                        print(f"Error processing field: {field_error}")
+                        continue
+                        
+            except Exception as page_error:
+                print(f"Error processing page {page_num + 1}: {page_error}")
+                continue
         
         # Save the modified PDF
+        print("\nSaving modified PDF...")
         doc.save(output_path, garbage=4, deflate=True, clean=True)
         doc.close()
         
-        return True
+        # Verify the file was saved
+        if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+            print(f"Successfully saved flattened PDF: {output_path}")
+            return True
+        else:
+            print("Error: Failed to save PDF or file is empty")
+            return False
+            
     except Exception as e:
         print(f"Error flattening PDF: {e}")
+        import traceback
+        print("Traceback:")
+        print(traceback.format_exc())
         return False
     finally:
         if doc:
