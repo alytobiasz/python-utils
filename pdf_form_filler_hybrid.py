@@ -137,6 +137,7 @@ def flatten_fields(input_path, output_path, fields_to_flatten):
     """Flatten specified fields using PyMuPDF."""
     pymupdf.TOOLS.mupdf_display_errors(False)
     doc = None
+    success = False
     try:
         # Open the filled PDF
         doc = fitz.open(input_path)
@@ -227,11 +228,11 @@ def flatten_fields(input_path, output_path, fields_to_flatten):
         doc.save(output_path, garbage=4, deflate=True, clean=True)
         
         # Verify the file was saved
-        if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
-            return True
-        else:
+        success = os.path.exists(output_path) and os.path.getsize(output_path) > 0
+        if not success:
             print("Error: Failed to save PDF or file is empty")
-            return False
+            
+        return success
             
     except Exception as e:
         print(f"Error flattening PDF: {e}")
@@ -243,6 +244,7 @@ def flatten_fields(input_path, output_path, fields_to_flatten):
         if doc:
             try:
                 doc.close()
+                doc = None
             except:
                 pass
 
@@ -273,12 +275,16 @@ def process_pdf(template_path, data_row, output_path, fields_to_flatten):
         print(f"Error processing PDF: {e}")
         return False
     finally:
-        # Always try to remove the temp file
-        try:
-            if os.path.exists(temp_path):
-                os.remove(temp_path)
-        except Exception as e:
-            print(f"Warning: Could not remove temporary file {temp_path}: {e}")
+        # Always try to remove the temp file with retries
+        if os.path.exists(temp_path):
+            for delay in [0.1, 0.2, 0.5]:  # Increasing delays
+                try:
+                    time.sleep(delay)
+                    os.remove(temp_path)
+                    break  # Success, exit the retry loop
+                except Exception as e:
+                    if delay == 0.5:  # Only print warning on last attempt
+                        print(f"Warning: Could not remove temporary file {temp_path}: {e}")
 
 def main():
     if len(sys.argv) not in [4, 5]:
