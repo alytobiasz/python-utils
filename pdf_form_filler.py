@@ -86,6 +86,14 @@ def fill_pdf_form(template_path, data_row, output_path):
         # Read the PDF template
         template = PdfReader(template_path)
         
+        # Ensure we have form fields to work with
+        if not template.Root.AcroForm:
+            print("Error: No form fields found in PDF template")
+            return False
+            
+        # Set NeedAppearances flag first
+        template.Root.AcroForm.update(PdfDict(NeedAppearances=True))
+        
         # Fill in the form fields
         for field_name, value in data_row.items():
             if template.Root.AcroForm.Fields:
@@ -93,32 +101,12 @@ def fill_pdf_form(template_path, data_row, output_path):
                     if field.T and field.T[1:-1] == field_name:
                         # Handle empty values (None, empty string, or whitespace)
                         if value is None or str(value).strip() == '':
-                            str_value = ''
+                            field.V = ''
                         else:
-                            str_value = str(value).strip()
+                            field.V = str(value).strip()
                         
-                        # Set the field value
-                        field.V = str_value
-                        
-                        # Force appearance generation for better compatibility
-                        field.update(PdfDict(
-                            V=str_value,
-                            AS=str_value,
-                            AP='',
-                            DA='/Helv 0 Tf 0 g',  # Default appearance string
-                            DV=str_value,  # Default value
-                            F=4,  # Field flags
-                            Ff=0,  # Field type flags
-                            Q=0,  # Left-aligned
-                        ))
-        
-        # Update the AcroForm dictionary to force appearance generation
-        if template.Root.AcroForm:
-            template.Root.AcroForm.update(PdfDict(
-                NeedAppearances=True,
-                DA='/Helv 0 Tf 0 g',
-                DR=PdfDict(Font=PdfDict(Helv=PdfDict(Type='/Font', Subtype='/Type1', Name='/Helv', BaseFont='/Helvetica')))
-            ))
+                        # Clear any existing appearance streams
+                        field.AP = ''
         
         # Write the filled PDF
         writer = PdfWriter()
