@@ -248,10 +248,8 @@ def flatten_fields(input_path, output_path, fields_to_flatten):
 
 def process_pdf(template_path, data_row, output_path, fields_to_flatten):
     """Process a single PDF form - fill and flatten."""
+    temp_path = output_path + '.temp.pdf'
     try:
-        # Create temporary file for intermediate step
-        temp_path = output_path + '.temp.pdf'
-        
         # Step 1: Fill the form using pdfrw
         if not fill_pdf_form(template_path, data_row, temp_path):
             print("Failed to fill PDF form")
@@ -262,11 +260,6 @@ def process_pdf(template_path, data_row, output_path, fields_to_flatten):
             if not flatten_fields(temp_path, output_path, fields_to_flatten):
                 print("Failed to flatten fields")
                 return False
-            # Remove temporary file
-            try:
-                os.remove(temp_path)
-            except:
-                pass
         else:
             # If no fields to flatten, just rename the temp file
             try:
@@ -279,6 +272,13 @@ def process_pdf(template_path, data_row, output_path, fields_to_flatten):
     except Exception as e:
         print(f"Error processing PDF: {e}")
         return False
+    finally:
+        # Always try to remove the temp file
+        try:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+        except Exception as e:
+            print(f"Warning: Could not remove temporary file {temp_path}: {e}")
 
 def main():
     if len(sys.argv) not in [4, 5]:
