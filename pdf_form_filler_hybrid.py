@@ -44,7 +44,6 @@ Important Notes:
 import sys
 import os
 from datetime import datetime
-import time
 from openpyxl import load_workbook
 from pdfrw import PdfReader, PdfWriter, PdfDict, PdfName, PdfObject
 import fitz
@@ -54,13 +53,18 @@ def read_excel_data(excel_path):
     try:
         wb = load_workbook(excel_path, read_only=True, data_only=True)
         sheet = wb.active
+        
+        # Get headers from first row
         headers = [cell.value for cell in sheet[1]]
+        
+        # Read all rows (excluding header)
         data = []
         for row in list(sheet.rows)[1:]:
             row_data = {headers[i]: cell.value 
                        for i, cell in enumerate(row) 
                        if i < len(headers)}
             data.append(row_data)
+            
         return headers, data
     except Exception as e:
         print(f"Error reading Excel file: {e}")
@@ -80,19 +84,27 @@ def read_fields_to_flatten(fields_file):
 def fill_pdf_form(template_path, data_row, temp_output_path):
     """Fill PDF form using pdfrw."""
     try:
+        # Read the PDF template
         template = PdfReader(template_path)
+        
+        # Create PDF writer
         writer = PdfWriter()
         
+        # Check if PDF has form fields
         if not template.Root.AcroForm:
+            print("Error: No form fields found in PDF template")
             return False
             
+        # Get form fields
         form_fields = template.Root.AcroForm.Fields
         if not form_fields:
-            return False
+            print("Warning: No form fields found in PDF")
         
+        # Update form fields
+        fields_filled = 0
         for field in form_fields:
             if field.T:
-                key = field.T[1:-1]
+                key = field.T[1:-1]  # Remove parentheses from field name
                 if key in data_row:
                     value = data_row[key]
                     if value is None or str(value).strip() == '':
@@ -100,71 +112,137 @@ def fill_pdf_form(template_path, data_row, temp_output_path):
                     else:
                         field.V = str(value).strip()
                     field.AP = ''
+                    fields_filled += 1
+                    print(f"Filled field: {key} = {value}")
         
+        print(f"Filled {fields_filled} fields")
+        
+        # Set form flags
         template.Root.AcroForm.update(PdfDict(
             NeedAppearances=PdfObject('true')
         ))
         
+        # Add all pages to the writer
         for page in template.pages:
             writer.addpage(page)
         
+        # Write the filled PDF
         writer.write(temp_output_path)
         return True
         
-    except Exception:
+    except Exception as e:
+        print(f"Error filling PDF form: {e}")
         return False
 
 def flatten_fields(input_path, output_path, fields_to_flatten):
     """Flatten specified fields using PyMuPDF."""
     doc = None
     try:
+        # Open the filled PDF
         doc = fitz.open(input_path)
         
-        for page in doc:
-            fields = list(page.widgets())
-            for field in fields:
-                field_name = getattr(field, 'field_name', None)
-                if not field_name:
-                    continue
-                    
-                if field_name in fields_to_flatten:
+        # Process each page
+        for page_num, page in enumerate(doc):
+            print(f"\nProcessing page {page_num + 1}...")
+            try:
+                # Get form fields (widgets) on the page
+                fields = list(page.widgets())
+                print(f"Found {len(fields)} form fields on page {page_num + 1}")
+                
+                for field in fields:
                     try:
-                        field_value = field.field_value
-                    except:
-                        try:
-                            field_value = field.text
-                        except:
-                            field_value = None
-                    
-                    if field_value and str(field_value).strip():
-                        try:
-                            rect = field.rect
-                            font_size = getattr(field, 'font_size', 12)
-                            if not font_size or font_size <= 0:
-                                font_size = 12
+                        # Get field name safely
+                        field_name = getattr(field, 'field_name', None)
+                        if not field_name:
+                            continue
                             
-                            x = rect.x0 + 2
-                            y = rect.y0 + font_size
+                        if field_name in fields_to_flatten:
+                            print(f"Processing field: {field_name}")
                             
-                            page.insert_text(
-                                point=(x, y),
-                                text=str(field_value),
-                                fontsize=font_size,
-                                color=(0, 0, 0)
-                            )
-                        except:
-                            pass
-                    
-                    try:
-                        page.delete_widget(field)
-                    except:
-                        pass
+                            # Get field value safely
+                            try:
+                                field_value = field.field_value
+                            except:
+                                try:
+                                    # Alternative way to get value
+                                    field_value = field.text
+                                except:
+                                    print(f"Could not get value for field {field_name}")
+                                    field_value = None
+                            
+                            # Check if field has a value
+                            if field_value and str(field_value).strip():
+                                print(f"Field value: {field_value}")
+                                try:
+                                    # Get field rectangle
+                                    rect = field.rect
+                                    
+                                    # Try to get font size from field
+                                    try:
+                                        font_size = field.font_size
+                                        if not font_size or font_size <= 0:
+                                            font_size = 12
+                                    except:
+                                        font_size = 12
+                                    
+                                    print(f"Using font size: {font_size}")
+                                    
+                                    # Calculate text position (slightly offset from top-left)
+                                    x = rect.x0 + 2  # 2 point offset from left
+                                    y = rect.y0 + font_size  # offset by font size from top
+                                    
+                                    # Insert text at the calculated position
+                                    page.insert_text(
+                                        point=(x, y),
+                                        text=str(field_value),
+                                        fontsize=font_size,
+                                        color=(0, 0, 0)  # Black text
+                                    )
+                                    
+                                    # Try to remove the form field
+                                    try:
+                                        page.delete_widget(field)
+                                        print(f"Successfully flattened field: {field_name}")
+                                    except Exception as e:
+                                        print(f"Warning: Could not delete widget for {field_name}: {e}")
+                                        
+                                except Exception as e:
+                                    print(f"Error processing field '{field_name}': {e}")
+                                    continue
+                            else:
+                                # Field is empty, just remove the widget
+                                try:
+                                    page.delete_widget(field)
+                                    print(f"Removed empty field: {field_name}")
+                                except Exception as e:
+                                    print(f"Warning: Could not remove empty field {field_name}: {e}")
+                                    
+                    except Exception as field_error:
+                        print(f"Error processing field: {field_error}")
+                        continue
+                        
+            except Exception as page_error:
+                print(f"Error processing page {page_num + 1}: {page_error}")
+                continue
         
+        # Save the modified PDF
+        print("\nSaving modified PDF...")
         doc.save(output_path, garbage=4, deflate=True, clean=True)
         doc.close()
-        return os.path.exists(output_path) and os.path.getsize(output_path) > 0
+        
+        # Verify the file was saved
+        if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+            print(f"Successfully saved flattened PDF: {output_path}")
+            return True
+        else:
+            print("Error: Failed to save PDF or file is empty")
+            return False
             
-    except Exception:
+    except Exception as e:
+        print(f"Error flattening PDF: {e}")
+        import traceback
+        print("Traceback:")
+        print(traceback.format_exc())
         return False
     finally:
         if doc:
@@ -176,26 +254,37 @@ def flatten_fields(input_path, output_path, fields_to_flatten):
 def process_pdf(template_path, data_row, output_path, fields_to_flatten):
     """Process a single PDF form - fill and flatten."""
     try:
+        # Create temporary file for intermediate step
         temp_path = output_path + '.temp.pdf'
         
+        # Step 1: Fill the form using pdfrw
+        print("\nStep 1: Filling form fields...")
         if not fill_pdf_form(template_path, data_row, temp_path):
+            print("Failed to fill PDF form")
             return False
         
+        # Step 2: Flatten specified fields using PyMuPDF
         if fields_to_flatten:
+            print("\nStep 2: Flattening specified fields...")
             if not flatten_fields(temp_path, output_path, fields_to_flatten):
+                print("Failed to flatten fields")
                 return False
+            # Remove temporary file
             try:
                 os.remove(temp_path)
             except:
                 pass
         else:
+            # If no fields to flatten, just rename the temp file
             try:
                 os.replace(temp_path, output_path)
-            except:
+            except Exception as e:
+                print(f"Error moving file: {e}")
                 return False
         
         return True
-    except Exception:
+    except Exception as e:
+        print(f"Error processing PDF: {e}")
         return False
 
 def main():
@@ -208,9 +297,13 @@ def main():
     output_dir = sys.argv[3]
     fields_file = sys.argv[4] if len(sys.argv) == 5 else None
     
+    # Create output directory if it doesn't exist
     os.makedirs(output_dir, exist_ok=True)
     
+    # Read fields to flatten
     fields_to_flatten = read_fields_to_flatten(fields_file)
+    if fields_file:
+        print(f"\nFields to flatten: {', '.join(fields_to_flatten)}")
     
     print("\nReading Excel data...")
     headers, data = read_excel_data(excel_path)
@@ -218,30 +311,27 @@ def main():
         print("Failed to read Excel data")
         sys.exit(1)
     
-    total_start_time = time.time()
+    print(f"\nFound {len(data)} rows to process")
+    print(f"Fields available: {', '.join(headers)}")
+    
+    # Process each row
     success_count = 0
-    
-    print(f"\nProcessing {len(data)} files...")
-    
     for i, row_data in enumerate(data, 1):
-        start_time = time.time()
+        print(f"\nProcessing row {i}/{len(data)}")
         
+        # Generate output filename
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         output_filename = f"filled_form_{timestamp}_{i}.pdf"
         output_path = os.path.join(output_dir, output_filename)
         
+        # Process the PDF
         if process_pdf(pdf_template, row_data, output_path, fields_to_flatten):
-            elapsed = time.time() - start_time
-            print(f"Processed file {i}/{len(data)} in {elapsed:.1f} seconds")
+            print(f"Successfully created: {output_filename}")
             success_count += 1
         else:
-            print(f"Failed to process file {i}/{len(data)}")
+            print(f"Failed to process row {i}")
     
-    total_time = time.time() - total_start_time
-    print(f"\nProcessing complete:")
-    print(f"Successfully processed {success_count} out of {len(data)} files")
-    print(f"Total processing time: {total_time:.1f} seconds")
-    print(f"Average time per file: {(total_time/len(data)):.1f} seconds")
+    print(f"\nProcessing complete. Successfully processed {success_count} out of {len(data)} forms.")
     print(f"Output files are in: {output_dir}")
 
 if __name__ == "__main__":
