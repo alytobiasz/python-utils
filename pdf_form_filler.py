@@ -11,7 +11,8 @@ Requirements:
     - Python 3.6 or higher
     - Required packages:
         pip install openpyxl>=3.1.2    # For Excel file handling
-        pip install PyPDF2==2.12.1     # For PDF form filling (specific version for compatibility)
+        pip install pdfrw>=0.4.0       # For PDF form filling
+        pip install reportlab>=3.6.12   # For PDF generation
 
 Usage:
     1. Prepare your Excel file:
@@ -40,8 +41,8 @@ Troubleshooting:
     2. Ensure your PDF template has fillable form fields
     3. Verify that all required files exist and are accessible
     4. Check that you have write permissions in the output directory
-    5. If you get PDF errors, make sure you have the correct version:
-       pip install PyPDF2==2.12.1
+    5. If you get PDF errors, make sure you have all required packages:
+       pip install openpyxl pdfrw reportlab
 
 License:
     This script is provided as-is under the MIT License.
@@ -51,7 +52,7 @@ import sys
 import os
 from datetime import datetime
 from openpyxl import load_workbook
-from PyPDF2 import PdfFileReader, PdfFileWriter
+from pdfrw import PdfReader, PdfWriter, PdfDict, PdfName
 
 def read_excel_data(excel_path):
     """Read data from Excel file."""
@@ -79,52 +80,50 @@ def fill_pdf_form(template_path, data_row, output_path):
     """Fill a single PDF form with data."""
     try:
         # Read the PDF template
-        with open(template_path, 'rb') as file:
-            reader = PdfFileReader(file, strict=False)
-            if reader.isEncrypted:
-                reader.decrypt('')
+        template = PdfReader(template_path)
+        
+        # Create PDF writer
+        writer = PdfWriter()
+        
+        # Check if PDF has form fields
+        if not template.Root.AcroForm:
+            print("Error: No form fields found in PDF template")
+            return False
             
-            writer = PdfFileWriter()
+        # Get form fields
+        form_fields = template.Root.AcroForm.Fields
+        if not form_fields:
+            print("Warning: No form fields found in PDF")
+        else:
+            print(f"Found {len(form_fields)} form fields in PDF")
             
-            # Copy all pages from the template
-            for page in range(reader.getNumPages()):
-                writer.addPage(reader.getPage(page))
-            
-            # Get form fields
-            form_fields = reader.getFields()
-            if not form_fields:
-                print("Warning: No form fields found in PDF")
-            else:
-                print(f"Found {len(form_fields)} form fields in PDF")
-                
-                # Update form fields
-                for field_name, value in data_row.items():
-                    if field_name in form_fields:
-                        # Handle empty values
+            # Update form fields
+            for field in form_fields:
+                if field.T:
+                    key = field.T[1:-1]  # Remove parentheses from field name
+                    if key in data_row:
+                        value = data_row[key]
                         if value is None or str(value).strip() == '':
-                            writer.updatePageFormFieldValues(
-                                writer.getPage(0),
-                                {field_name: ''}
-                            )
+                            field.V = ''
                         else:
-                            writer.updatePageFormFieldValues(
-                                writer.getPage(0),
-                                {field_name: str(value).strip()}
-                            )
-                    else:
-                        print(f"Warning: Field '{field_name}' not found in PDF form")
+                            field.V = str(value).strip()
+                        # Clear appearance streams to force regeneration
+                        field.AP = ''
             
             # Set form flags
-            writer._root_object.update({
-                '/NeedAppearances': True
-            })
-            
-            # Write the filled PDF
-            with open(output_path, 'wb') as output_file:
-                writer.write(output_file)
-            
-            return True
-            
+            template.Root.AcroForm.update(PdfDict(
+                NeedAppearances=PdfName('true'),
+                DA=PdfName('/Helv 0 Tf 0 g')
+            ))
+        
+        # Add all pages to the writer
+        for page in template.pages:
+            writer.addpage(page)
+        
+        # Write the filled PDF
+        writer.write(output_path)
+        return True
+        
     except Exception as e:
         print(f"Error filling PDF form: {e}")
         return False
