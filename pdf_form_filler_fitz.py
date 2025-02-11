@@ -104,15 +104,26 @@ def fill_pdf_form(template_path, data_row, output_path, fields_to_flatten):
         
         # Get form fields
         form_fields = {}
-        for page in doc:
-            for field in page.widgets():
-                if field.field_type == 3:  # Text field
+        print("\nScanning PDF for form fields...")
+        for page_num, page in enumerate(doc):
+            fields = page.widgets()
+            print(f"Page {page_num + 1}: Found {len(fields)} form fields")
+            for field in fields:
+                # Print field details for debugging
+                print(f"Field: name='{field.field_name}', type={field.field_type}")
+                # Store all fields, not just text fields
+                if field.field_name:
                     form_fields[field.field_name] = field
         
         if not form_fields:
-            print("Warning: No form fields found in PDF")
+            print("\nWarning: No form fields found in PDF")
+            print("This could mean:")
+            print("1. The PDF doesn't have any form fields")
+            print("2. The fields are a different type than expected")
+            print("3. The PDF needs to be prepared with form fields first")
         else:
-            print(f"Found {len(form_fields)} form fields in PDF")
+            print(f"\nFound {len(form_fields)} total form fields")
+            print("Field names found:", ", ".join(form_fields.keys()))
             
             # Fill form fields
             for field_name, value in data_row.items():
@@ -120,27 +131,42 @@ def fill_pdf_form(template_path, data_row, output_path, fields_to_flatten):
                     # Handle empty values
                     str_value = str(value).strip() if value is not None else ''
                     field = form_fields[field_name]
-                    field.field_value = str_value
-                    field.update()
                     
-                    # Flatten this field if it's in the list
-                    if field_name in fields_to_flatten:
-                        # Get the field's current value and appearance
-                        field_value = field.field_value
-                        if field_value:
-                            # Create text annotation at the field's location
-                            rect = field.rect
-                            page = doc[field.page_number]
-                            page.insert_text(
-                                rect.br, 
-                                field_value,
-                                fontsize=12,
-                                color=(0, 0, 0)  # Black text
-                            )
-                            # Remove the form field
-                            page.delete_widget(field)
+                    try:
+                        # Try to set the field value
+                        field.field_value = str_value
+                        field.update()
+                        print(f"Successfully filled field: {field_name}")
+                        
+                        # Flatten this field if it's in the list
+                        if field_name in fields_to_flatten:
+                            # Get the field's current value and appearance
+                            field_value = field.field_value
+                            if field_value:
+                                # Create text annotation at the field's location
+                                rect = field.rect
+                                page = doc[field.page_number]
+                                
+                                # Get field font size if available, otherwise use default
+                                font_size = getattr(field, 'font_size', 12)
+                                if not font_size or font_size <= 0:
+                                    font_size = 12
+                                
+                                # Insert text at the field's position
+                                page.insert_text(
+                                    point=rect.tl,  # Top-left instead of bottom-right
+                                    text=field_value,
+                                    fontsize=font_size,
+                                    color=(0, 0, 0)  # Black text
+                                )
+                                # Remove the form field
+                                page.delete_widget(field)
+                                print(f"Flattened field: {field_name}")
+                    except Exception as field_error:
+                        print(f"Error filling field '{field_name}': {field_error}")
                 else:
                     print(f"Warning: Field '{field_name}' not found in PDF form")
+                    print("Available fields:", ", ".join(form_fields.keys()))
         
         # Save the filled PDF
         doc.save(output_path)
