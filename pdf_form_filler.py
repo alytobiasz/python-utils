@@ -91,11 +91,38 @@ def fill_pdf_form(template_path, data_row, output_path):
             if template.Root.AcroForm.Fields:
                 for field in template.Root.AcroForm.Fields:
                     if field.T and field.T[1:-1] == field_name:
-                        field.V = str(value)
-                        field.update(PdfDict(AP=None))
+                        # Handle empty values (None, empty string, or whitespace)
+                        if value is None or str(value).strip() == '':
+                            str_value = ''
+                        else:
+                            str_value = str(value).strip()
+                        
+                        # Set the field value
+                        field.V = str_value
+                        
+                        # Force appearance generation for better compatibility
+                        field.update(PdfDict(
+                            V=str_value,
+                            AS=str_value,
+                            AP='',
+                            DA='/Helv 0 Tf 0 g',  # Default appearance string
+                            DV=str_value,  # Default value
+                            F=4,  # Field flags
+                            Ff=0,  # Field type flags
+                            Q=0,  # Left-aligned
+                        ))
+        
+        # Update the AcroForm dictionary to force appearance generation
+        if template.Root.AcroForm:
+            template.Root.AcroForm.update(PdfDict(
+                NeedAppearances=True,
+                DA='/Helv 0 Tf 0 g',
+                DR=PdfDict(Font=PdfDict(Helv=PdfDict(Type='/Font', Subtype='/Type1', Name='/Helv', BaseFont='/Helvetica')))
+            ))
         
         # Write the filled PDF
-        PdfWriter().write(output_path, template)
+        writer = PdfWriter()
+        writer.write(output_path, template)
         return True
     except Exception as e:
         print(f"Error filling PDF form: {e}")
