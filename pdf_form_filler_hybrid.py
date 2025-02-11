@@ -168,9 +168,10 @@ def flatten_fields(input_path, output_path, fields_to_flatten):
                                     field_value = field.text
                                 except:
                                     print(f"Could not get value for field {field_name}")
-                                    continue
+                                    field_value = None
                             
-                            if field_value:
+                            # Check if field has a value
+                            if field_value and str(field_value).strip():
                                 print(f"Field value: {field_value}")
                                 try:
                                     # Get field rectangle
@@ -208,6 +209,14 @@ def flatten_fields(input_path, output_path, fields_to_flatten):
                                 except Exception as e:
                                     print(f"Error processing field '{field_name}': {e}")
                                     continue
+                            else:
+                                # Field is empty, just remove the widget
+                                try:
+                                    page.delete_widget(field)
+                                    print(f"Removed empty field: {field_name}")
+                                except Exception as e:
+                                    print(f"Warning: Could not remove empty field {field_name}: {e}")
+                                    
                     except Exception as field_error:
                         print(f"Error processing field: {field_error}")
                         continue
