@@ -106,11 +106,12 @@ def fill_pdf_form(template_path, data_row, output_path, fields_to_flatten):
         form_fields = {}
         print("\nScanning PDF for form fields...")
         for page_num, page in enumerate(doc):
-            fields = page.widgets()
-            print(f"Page {page_num + 1}: Found {len(fields)} form fields")
-            for field in fields:
+            # Convert widgets generator to list before getting length
+            page_fields = list(page.widgets())
+            print(f"Page {page_num + 1}: Found {len(page_fields)} form fields")
+            for field in page_fields:
                 # Print field details for debugging
-                print(f"Field: name='{field.field_name}', type={field.field_type}")
+                print(f"Field: name='{field.field_name}', type={field.field_type}, value='{field.field_value}'")
                 # Store all fields, not just text fields
                 if field.field_name:
                     form_fields[field.field_name] = field
@@ -136,7 +137,7 @@ def fill_pdf_form(template_path, data_row, output_path, fields_to_flatten):
                         # Try to set the field value
                         field.field_value = str_value
                         field.update()
-                        print(f"Successfully filled field: {field_name}")
+                        print(f"Successfully filled field: {field_name} with value: {str_value}")
                         
                         # Flatten this field if it's in the list
                         if field_name in fields_to_flatten:
@@ -166,7 +167,6 @@ def fill_pdf_form(template_path, data_row, output_path, fields_to_flatten):
                         print(f"Error filling field '{field_name}': {field_error}")
                 else:
                     print(f"Warning: Field '{field_name}' not found in PDF form")
-                    print("Available fields:", ", ".join(form_fields.keys()))
         
         # Save the filled PDF
         doc.save(output_path)
@@ -175,6 +175,8 @@ def fill_pdf_form(template_path, data_row, output_path, fields_to_flatten):
         
     except Exception as e:
         print(f"Error filling PDF form: {e}")
+        if 'doc' in locals():
+            doc.close()
         return False
 
 def main():
