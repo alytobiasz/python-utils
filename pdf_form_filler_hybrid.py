@@ -199,6 +199,8 @@ def flatten_fields(input_path, output_path, fields_to_flatten):
                                         
                                 except Exception as e:
                                     print(f"Error processing field '{field_name}': {e}")
+                                    import traceback
+                                    print(traceback.format_exc())
                                     continue
                             else:
                                 # Field is empty, just remove the widget
@@ -209,10 +211,14 @@ def flatten_fields(input_path, output_path, fields_to_flatten):
                                     
                     except Exception as field_error:
                         print(f"Error processing field: {field_error}")
+                        import traceback
+                        print(traceback.format_exc())
                         continue
                         
             except Exception as page_error:
                 print(f"Error processing page {page_num + 1}: {page_error}")
+                import traceback
+                print(traceback.format_exc())
                 continue
         
         # Save the modified PDF
