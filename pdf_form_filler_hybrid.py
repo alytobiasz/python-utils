@@ -121,43 +121,45 @@ def flatten_fields(input_path, output_path, fields_to_flatten):
         doc = fitz.open(input_path)
         
         for page in doc:
-            for field in page.widgets():
-                try:
-                    # Get field name directly from widget
-                    field_name = field.field_name
-                    if not field_name or field_name not in fields_to_flatten:
-                        continue
-                        
-                    # Get field value directly
-                    field_value = field.field_value
-                    if not field_value or not str(field_value).strip():
-                        # Just remove empty fields
-                        page.delete_widget(field)
-                        continue
+            fields = list(page.widgets())
+            for field in fields:
+                field_name = getattr(field, 'field_name', None)
+                if not field_name:
+                    continue
                     
-                    # Get field position and properties
-                    rect = field.rect
-                    font_size = 12  # Use consistent font size
+                if field_name in fields_to_flatten:
+                    try:
+                        field_value = field.field_value
+                    except:
+                        try:
+                            field_value = field.text
+                        except:
+                            field_value = None
                     
-                    # Insert text first
-                    page.insert_text(
-                        point=(rect.x0 + 2, rect.y0 + font_size),
-                        text=str(field_value),
-                        fontsize=font_size,
-                        color=(0, 0, 0)
-                    )
+                    if field_value and str(field_value).strip():
+                        try:
+                            rect = field.rect
+                            font_size = getattr(field, 'font_size', 12)
+                            if not font_size or font_size <= 0:
+                                font_size = 12
+                            
+                            x = rect.x0 + 2
+                            y = rect.y0 + font_size
+                            
+                            page.insert_text(
+                                point=(x, y),
+                                text=str(field_value),
+                                fontsize=font_size,
+                                color=(0, 0, 0)
+                            )
+                        except:
+                            pass
                     
-                    # Then remove the widget
-                    page.delete_widget(field)
-                    
-                except:
-                    # If any error occurs with a field, try to just remove it
                     try:
                         page.delete_widget(field)
                     except:
                         pass
         
-        # Save with optimization
         doc.save(output_path, garbage=4, deflate=True, clean=True)
         doc.close()
         return os.path.exists(output_path) and os.path.getsize(output_path) > 0
