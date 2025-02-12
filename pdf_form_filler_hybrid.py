@@ -356,6 +356,7 @@ def main():
         sys.exit(1)
     
     try:
+        total_start_time = time.time()
         config = read_config(sys.argv[1])
         
         # Extract configuration
@@ -388,11 +389,19 @@ def main():
         if filename_field1 not in headers or filename_field2 not in headers:
             raise ValueError(f"Filename fields '{filename_field1}' and/or '{filename_field2}' not found in Excel headers")
         
+        # Count total non-empty rows
+        total_files = sum(1 for row in ws.iter_rows(min_row=2) if any(cell.value for cell in row))
+        processed_count = 0
+        success_count = 0
+        
         # Process each row
         for row_cells in ws.iter_rows(min_row=2):
             row = [cell.value for cell in row_cells]
             if not any(row):  # Skip empty rows
                 continue
+            
+            processed_count += 1
+            start_time = time.time()
             
             # Create data dictionary
             data = {headers[i]: str(val) if val is not None else '' for i, val in enumerate(row)}
@@ -419,12 +428,21 @@ def main():
             
             # Process the PDF
             success = process_pdf(pdf_template, data, output_path, flatten_fields_list)
+            elapsed_time = time.time() - start_time
+            
             if success:
-                print(f"Successfully processed: {os.path.basename(output_path)}")
+                success_count += 1
+                print(f"Successfully processed {processed_count}/{total_files} files: {os.path.basename(output_path)} in {elapsed_time:.1f} seconds")
             else:
                 print(f"Failed to process PDF for row: {row}")
         
-        print("\nProcessing complete!")
+        # Calculate total processing time and print summary
+        total_time = time.time() - total_start_time
+        print("\nProcessing Summary:")
+        print(f"Total files processed: {success_count}/{total_files}")
+        print(f"Total processing time: {total_time:.1f} seconds")
+        print(f"Average time per file: {(total_time/total_files):.1f} seconds")
+        print(f"Output directory: {os.path.abspath(output_directory)}")
         
     except Exception as e:
         print(f"Error: {str(e)}")
