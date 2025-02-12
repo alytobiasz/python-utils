@@ -25,13 +25,19 @@ Usage:
     1. Prepare your files:
        - Excel file: First row should contain headers that match PDF form field names
        - PDF template: Should have fillable form fields
-       - Fields config file: Text file with one field name per line to be flattened
+       - Config file: Text file with the following format:
+         excel_file = path/to/data.xlsx
+         pdf_template = path/to/template.pdf
+         output_directory = path/to/output
+         filename_field1 = First Name
+         filename_field2 = Last Name
+         fields_to_flatten = field1, field2, field3  # Optional, comma-separated list
     
     2. Run the script:
-       python pdf_form_filler_hybrid.py <excel_file> <pdf_template> <output_directory> [fields_to_flatten.txt]
+       python pdf_form_filler_hybrid.py <config_file>
     
        Example:
-       python pdf_form_filler_hybrid.py data.xlsx template.pdf output_forms fields.txt
+       python pdf_form_filler_hybrid.py config.txt
 
 Important Notes:
     1. The Excel column headers must match the PDF form field names exactly
@@ -49,6 +55,8 @@ from pdfrw import PdfReader, PdfWriter, PdfDict, PdfName, PdfObject
 import fitz
 import pymupdf
 import time
+import traceback
+import re
 
 def read_excel_data(excel_path):
     """Read data from Excel file."""
@@ -71,17 +79,6 @@ def read_excel_data(excel_path):
     except Exception as e:
         print(f"Error reading Excel file: {e}")
         return None, None
-
-def read_fields_to_flatten(fields_file):
-    """Read list of fields to flatten from file."""
-    try:
-        if not fields_file:
-            return set()
-        with open(fields_file, 'r') as f:
-            return {line.strip() for line in f if line.strip()}
-    except Exception as e:
-        print(f"Error reading fields config file: {e}")
-        return set()
 
 def fill_pdf_form(template_path, data_row, temp_output_path):
     """Fill PDF form using pdfrw."""
@@ -292,53 +289,147 @@ def process_pdf(template_path, data_row, output_path, fields_to_flatten):
                     if delay == 1.0:  # Only print warning on last attempt
                         print(f"Warning: Could not remove temporary file {temp_path}: {e}")
 
+def sanitize_filename(filename):
+    """
+    Sanitize a filename by removing or replacing invalid characters.
+    
+    Args:
+        filename (str): The filename to sanitize
+        
+    Returns:
+        str: The sanitized filename
+    """
+    # Replace invalid characters with underscores
+    invalid_chars = r'[<>:"/\\|?*]'
+    filename = re.sub(invalid_chars, '_', filename)
+    
+    # Remove leading/trailing spaces and dots
+    filename = filename.strip('. ')
+    
+    # Replace multiple spaces/underscores with single ones
+    filename = re.sub(r'[\s_]+', '_', filename)
+    
+    # Limit length (Windows has a 255 character limit)
+    max_length = 200  # Leave room for path and extension
+    if len(filename) > max_length:
+        filename = filename[:max_length]
+    
+    return filename
+
+def read_config(config_path):
+    """
+    Read configuration from a file.
+    
+    Args:
+        config_path (str): Path to the configuration file
+        
+    Returns:
+        dict: Configuration parameters
+        
+    Raises:
+        ValueError: If required fields are missing
+    """
+    config = {}
+    required_fields = ['excel_file', 'pdf_template', 'output_directory', 'filename_field1', 'filename_field2']
+    
+    try:
+        with open(config_path, 'r') as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    key, value = map(str.strip, line.split('=', 1))
+                    config[key] = value
+    except Exception as e:
+        raise ValueError(f"Error reading config file: {str(e)}")
+    
+    # Check for required fields
+    missing = [field for field in required_fields if field not in config]
+    if missing:
+        raise ValueError(f"Missing required fields in config file: {', '.join(missing)}")
+    
+    return config
+
 def main():
-    if len(sys.argv) not in [4, 5]:
-        print("Usage: python pdf_form_filler_hybrid.py <excel_file> <pdf_template> <output_directory> [fields_to_flatten.txt]")
+    """Main function to process PDF forms."""
+    if len(sys.argv) != 2:
+        print("Usage: python pdf_form_filler_hybrid.py <config_file>")
         sys.exit(1)
     
-    excel_path = sys.argv[1]
-    pdf_template = sys.argv[2]
-    output_dir = sys.argv[3]
-    fields_file = sys.argv[4] if len(sys.argv) == 5 else None
-    
-    os.makedirs(output_dir, exist_ok=True)
-    fields_to_flatten = read_fields_to_flatten(fields_file)
-    
-    print("\nReading Excel data...")
-    headers, data = read_excel_data(excel_path)
-    if not headers or not data:
-        print("Failed to read Excel data")
+    try:
+        config = read_config(sys.argv[1])
+        
+        # Extract configuration
+        excel_file = config['excel_file']
+        pdf_template = config['pdf_template']
+        output_directory = config['output_directory']
+        filename_field1 = config['filename_field1']
+        filename_field2 = config['filename_field2']
+        
+        # Parse fields to flatten from comma-separated string
+        flatten_fields_list = []
+        if 'fields_to_flatten' in config:
+            flatten_fields_list = [
+                field.strip() 
+                for field in config['fields_to_flatten'].split(',')
+                if field.strip()
+            ]
+            if flatten_fields_list:
+                print(f"Fields to flatten: {', '.join(flatten_fields_list)}")
+        
+        # Create output directory if it doesn't exist
+        os.makedirs(output_directory, exist_ok=True)
+        
+        # Read Excel data
+        wb = load_workbook(filename=excel_file, data_only=True)
+        ws = wb.active
+        headers = [cell.value for cell in ws[1]]
+        
+        # Verify filename fields exist in headers
+        if filename_field1 not in headers or filename_field2 not in headers:
+            raise ValueError(f"Filename fields '{filename_field1}' and/or '{filename_field2}' not found in Excel headers")
+        
+        # Process each row
+        for row_cells in ws.iter_rows(min_row=2):
+            row = [cell.value for cell in row_cells]
+            if not any(row):  # Skip empty rows
+                continue
+            
+            # Create data dictionary
+            data = {headers[i]: str(val) if val is not None else '' for i, val in enumerate(row)}
+            
+            # Generate output filename from specified fields
+            field1_value = data.get(filename_field1, '').strip()
+            field2_value = data.get(filename_field2, '').strip()
+            
+            if field1_value or field2_value:
+                filename = f"{field1_value} {field2_value}".strip()
+            else:
+                # Fallback to timestamp if both fields are empty
+                filename = datetime.now().strftime("%Y%m%d_%H%M%S")
+            
+            # Sanitize filename
+            filename = sanitize_filename(filename)
+            
+            # Add .pdf extension and handle duplicates
+            output_path = os.path.join(output_directory, f"{filename}.pdf")
+            counter = 1
+            while os.path.exists(output_path):
+                output_path = os.path.join(output_directory, f"{filename}_{counter}.pdf")
+                counter += 1
+            
+            # Process the PDF
+            success = process_pdf(pdf_template, data, output_path, flatten_fields_list)
+            if success:
+                print(f"Successfully processed: {os.path.basename(output_path)}")
+            else:
+                print(f"Failed to process PDF for row: {row}")
+        
+        print("\nProcessing complete!")
+        
+    except Exception as e:
+        print(f"Error: {str(e)}")
+        traceback.print_exc()
         sys.exit(1)
-    
-    total_start_time = time.time()
-    success_count = 0
-    
-    print(f"\nProcessing {len(data)} files...")
-    
-    for i, row_data in enumerate(data, 1):
-        start_time = time.time()
-        
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        output_filename = f"filled_form_{timestamp}_{i}.pdf"
-        output_path = os.path.join(output_dir, output_filename)
-        
-        if process_pdf(pdf_template, row_data, output_path, fields_to_flatten):
-            elapsed = time.time() - start_time
-            print(f"File {i}/{len(data)} - Success - {elapsed:.1f} seconds")
-            success_count += 1
-        else:
-            elapsed = time.time() - start_time
-            print(f"File {i}/{len(data)} - Failed - {elapsed:.1f} seconds")
-    
-    total_time = time.time() - total_start_time
-    avg_time = total_time / len(data)
-    
-    print(f"\nProcessing complete:")
-    print(f"Successfully processed: {success_count}/{len(data)} files")
-    print(f"Total time: {total_time:.1f} seconds")
-    print(f"Average time per file: {avg_time:.1f} seconds")
-    print(f"Output directory: {output_dir}")
 
 if __name__ == "__main__":
     main() 
