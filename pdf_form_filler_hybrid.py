@@ -264,7 +264,6 @@ def process_pdf(template_path, data_row, output_path, fields_to_flatten):
             # Force garbage collection after flattening
             import gc
             gc.collect()
-            time.sleep(0.2)  # Give system time to release resources
         else:
             # If no fields to flatten, just rename the temp file
             try:
@@ -280,7 +279,7 @@ def process_pdf(template_path, data_row, output_path, fields_to_flatten):
     finally:
         # Always try to remove the temp file with retries
         if os.path.exists(temp_path):
-            for delay in [0.2, 0.5, 1.0]:  # Longer delays
+            for delay in [0, 0.2, 0.5, 1.0]:  # Longer delays
                 try:
                     time.sleep(delay)
                     os.remove(temp_path)
