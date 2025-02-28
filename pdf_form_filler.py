@@ -2,14 +2,13 @@
 # -*- coding: utf-8 -*-
 
 """
-PDF Form Filler (Hybrid version)
+PDF Form Filler
 
 This script uses pdfrw to fill PDF forms and PyMuPDF (fitz) to flatten specified fields.
-All processing is done locally to maintain data privacy.
 
 Requirements:
     - Python 3.6 or higher
-    - Required packages (install exact versions for compatibility):
+    - Required packages (install exact versions to ensure compatibility):
         pip install openpyxl==3.0.10     # For Excel file handling
         pip install pdfrw==0.4.0         # For PDF form filling
         pip install PyMuPDF==1.21.1      # For field flattening
@@ -34,17 +33,10 @@ Usage:
          fields_to_flatten = field1, field2, field3  # Optional, comma-separated list
     
     2. Run the script:
-       python pdf_form_filler_hybrid.py <config_file>
+       python pdf_form_filler.py <config_file>
     
        Example:
-       python pdf_form_filler_hybrid.py config.txt
-
-Important Notes:
-    1. The Excel column headers must match the PDF form field names exactly
-    2. All processing is done locally - no data is sent over the internet
-    3. Make sure you have write permissions in the output directory
-    4. Back up your PDF template and Excel file before running the script
-    5. Flattened fields cannot be edited after processing
+       python pdf_form_filler.py config.txt
 """
 
 import sys
