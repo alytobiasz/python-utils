@@ -343,7 +343,7 @@ def read_config(config_path):
 def main():
     """Main function to process PDF forms."""
     if len(sys.argv) != 2:
-        print("Usage: python pdf_form_filler_hybrid.py <config_file>")
+        print("Usage: python pdf_form_filler.py <config_file>")
         sys.exit(1)
     
     try:
