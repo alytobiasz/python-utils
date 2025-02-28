@@ -4,7 +4,7 @@
 """
 PDF Form Filler
 
-This script uses pdfrw to fill PDF forms and PyMuPDF (fitz) to flatten specified fields.
+This script uses pdfrw to fill PDF forms and PyMuPDF (fitz) to flatten form fields.
 
 Requirements:
     - Python 3.6 or higher
@@ -17,13 +17,13 @@ Usage:
     1. Prepare your files:
        - Excel file: First row should contain headers that match PDF form field names
        - PDF template: Should have fillable form fields
-       - Config file: Text file with the following format:
-         excel_file = path/to/data.xlsx
-         pdf_template = path/to/template.pdf
-         output_directory = path/to/output
-         filename_field1 = First Name
-         filename_field2 = Last Name
-         fields_to_flatten = field1, field2, field3  # Optional, comma-separated list
+       - Config file: Text file with the following format 
+         (the filename fields specify how each output PDF is named):
+            excel_file = path/to/data.xlsx
+            pdf_template = path/to/template.pdf
+            output_directory = path/to/output
+            filename_field1 = First Name
+            filename_field2 = Last Name
     
     2. Run the script:
        python pdf_form_filler.py <config_file>
@@ -350,17 +350,6 @@ def main():
         filename_field1 = config['filename_field1']
         filename_field2 = config['filename_field2']
         
-        # Parse fields to flatten from comma-separated string
-        flatten_fields_list = []
-        if 'fields_to_flatten' in config:
-            flatten_fields_list = [
-                field.strip() 
-                for field in config['fields_to_flatten'].split(',')
-                if field.strip()
-            ]
-            if flatten_fields_list:
-                print(f"Fields to flatten: {', '.join(flatten_fields_list)}")
-        
         # Create output directory if it doesn't exist
         os.makedirs(output_directory, exist_ok=True)
         
@@ -372,6 +361,8 @@ def main():
         # Verify filename fields exist in headers
         if filename_field1 not in headers or filename_field2 not in headers:
             raise ValueError(f"Filename fields '{filename_field1}' and/or '{filename_field2}' not found in Excel headers")
+        
+        print(f"Found {len(headers)} fields in Excel headers")
         
         # Count total non-empty rows
         total_files = sum(1 for row in ws.iter_rows(min_row=2) if any(cell.value for cell in row))
@@ -410,8 +401,7 @@ def main():
                 output_path = os.path.join(output_directory, f"{filename}_{counter}.pdf")
                 counter += 1
             
-            # Process the PDF
-            success = process_pdf(pdf_template, data, output_path, flatten_fields_list)
+            success = process_pdf(pdf_template, data, output_path, headers)
             elapsed_time = time.time() - start_time
             
             if success:
