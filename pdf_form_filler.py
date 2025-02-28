@@ -13,13 +13,6 @@ Requirements:
         pip install pdfrw==0.4.0         # For PDF form filling
         pip install PyMuPDF==1.21.1      # For field flattening
 
-    Installation steps:
-    1. First, uninstall any existing versions:
-        pip uninstall openpyxl pdfrw PyMuPDF
-    
-    2. Then install the exact versions:
-        pip install openpyxl==3.0.10 pdfrw==0.4.0 PyMuPDF==1.21.1
-
 Usage:
     1. Prepare your files:
        - Excel file: First row should contain headers that match PDF form field names
