@@ -10,14 +10,15 @@ For example, it will replace [First Name] or [First_Name] with "John" based on E
 
 Requirements:
     - Python 3.6 or higher
-    - LibreOffice or OpenOffice must be installed
-    - unoconv command-line tool (install via package manager):
-        macOS: brew install unoconv
-        Linux: sudo apt-get install unoconv
-        Windows: Install LibreOffice and add unoconv manually
     - Required Python packages:
         pip install python-docx==0.8.11    # For Word document handling
         pip install openpyxl==3.0.10       # For Excel file handling
+        pip install docx2pdf==0.1.8        # For Word to PDF conversion on Windows
+        pip install appscript==1.2.2       # For Word to PDF conversion on macOS
+    - Microsoft Word must be installed (Windows or macOS)
+    - If Microsoft Word is not available on Unix systems:
+        macOS: brew install libreoffice
+        Linux: sudo apt-get install libreoffice
 
 Usage:
     1. Prepare your files:
@@ -43,7 +44,6 @@ Note:
     - Field names in Word doc must match Excel headers exactly (excluding brackets)
     - Fields are case-sensitive: [First_Name] ≠ [first_name]
     - Output files will be named using the specified fields (or timestamp if omitted)
-    - LibreOffice/OpenOffice must be installed for PDF conversion
 """
 
 import sys
@@ -54,8 +54,17 @@ import time
 from docx import Document
 from openpyxl import load_workbook
 import traceback
-import subprocess
-import shutil
+import platform
+
+# Import appropriate conversion module based on platform
+if platform.system() == 'Darwin':  # macOS
+    try:
+        from appscript import app, k, mactypes
+        WORD_APP = None  # Will be initialized on first use
+    except ImportError:
+        from docx2pdf import convert
+else:
+    from docx2pdf import convert
 
 def normalize_field_name(name):
     """
@@ -168,7 +177,7 @@ def read_config(config_path):
 
 def convert_to_pdf(docx_path, pdf_path):
     """
-    Convert Word document to PDF using unoconv.
+    Convert Word document to PDF using docx2pdf.
     
     Args:
         docx_path (str): Path to the Word document
@@ -178,23 +187,18 @@ def convert_to_pdf(docx_path, pdf_path):
         bool: True if conversion was successful, False otherwise
     """
     try:
-        # Check if unoconv is available
-        if not shutil.which('unoconv'):
-            raise Exception("unoconv not found. Please install unoconv first.")
-        
-        # Convert to PDF using unoconv
-        subprocess.run(['unoconv', '-f', 'pdf', '-o', pdf_path, docx_path], 
-                      check=True, capture_output=True, text=True)
+        # Use docx2pdf for all platforms
+        from docx2pdf import convert
+        convert(docx_path, pdf_path)
         
         # Verify the PDF was created
         if not os.path.exists(pdf_path):
             raise Exception("PDF file was not created")
+        if os.path.getsize(pdf_path) == 0:
+            raise Exception("PDF file is empty")
             
         return True
-        
-    except subprocess.CalledProcessError as e:
-        print(f"Error during PDF conversion: {e.stderr}")
-        return False
+            
     except Exception as e:
         print(f"Error converting to PDF: {e}")
         return False
