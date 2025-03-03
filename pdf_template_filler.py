@@ -219,8 +219,10 @@ def replace_fields_in_pdf(pdf_path, output_path, data):
                     # Insert the new text at the original position
                     # Add a small padding to x position to prevent text from touching the edges
                     padding = font_size * 0.2  # 20% of font size as padding
+                    # Use y1 (bottom) coordinate and offset up slightly for proper baseline alignment
+                    baseline_offset = font_size * 0.2  # Offset up by 20% of font size
                     page.insert_text(
-                        point=(inst.x0 + padding, inst.y0 + font_size),
+                        point=(inst.x0 + padding, inst.y1 - baseline_offset),
                         text=value,
                         fontname=font_name,
                         fontsize=font_size,
