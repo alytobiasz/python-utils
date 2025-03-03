@@ -110,6 +110,24 @@ def replace_fields_in_pdf(pdf_path, output_path, data):
         if not hasattr(replace_fields_in_pdf, 'field_mapping'):
             replace_fields_in_pdf.field_mapping = {}
             replace_fields_in_pdf.font_substitutions = {}
+            
+            # Common font name mappings from Word/PDF to standard PostScript names
+            replace_fields_in_pdf.font_mappings = {
+                'TimesNewRomanPSMT': 'Times-Roman',
+                'TimesNewRomanPS': 'Times-Roman',
+                'TimesNewRoman': 'Times-Roman',
+                'ArialMT': 'Arial',
+                'ArialMS': 'Arial',
+                'Calibri': 'Helvetica',
+                'CalibriLight': 'Helvetica',
+                'Cambria': 'Times-Roman',
+                'Georgia': 'Times-Roman',
+                'SegoeUI': 'Helvetica',
+                'Verdana': 'Helvetica',
+                'Symbol': 'Symbol',
+                'ZapfDingbats': 'ZapfDingbats'
+            }
+            
             for key, value in data.items():
                 variations = normalize_field_name(key)
                 for variant in variations:
@@ -128,7 +146,7 @@ def replace_fields_in_pdf(pdf_path, output_path, data):
         replacements_made = 0
         
         # Define fallback fonts in order of preference
-        fallback_fonts = ['Helvetica', 'Arial', 'Times-Roman']
+        fallback_fonts = ['Times-Roman', 'Helvetica', 'Arial']
         
         # Process each page
         for page_num, page in enumerate(doc):
@@ -159,24 +177,40 @@ def replace_fields_in_pdf(pdf_path, output_path, data):
                     if original_font in replace_fields_in_pdf.font_substitutions:
                         font_name = replace_fields_in_pdf.font_substitutions[original_font]
                     else:
-                        # Find suitable font
-                        font_name = original_font
-                        try:
-                            fitz.get_text_length(value, fontname=font_name, fontsize=font_size)
-                        except ValueError:
-                            for fallback_font in fallback_fonts:
-                                try:
-                                    fitz.get_text_length(value, fontname=fallback_font, fontsize=font_size)
-                                    font_name = fallback_font
-                                    print(f"Using fallback font '{fallback_font}' instead of '{original_font}'")
-                                    replace_fields_in_pdf.font_substitutions[original_font] = fallback_font
-                                    break
-                                except ValueError:
-                                    continue
-                            if font_name == original_font:  # If no fallback worked
-                                font_name = "Helvetica"
-                                print(f"Warning: Using Helvetica as fallback for '{original_font}'")
-                                replace_fields_in_pdf.font_substitutions[original_font] = "Helvetica"
+                        # Check if there's a mapping for this font
+                        mapped_font = replace_fields_in_pdf.font_mappings.get(original_font)
+                        if mapped_font:
+                            try:
+                                fitz.get_text_length(value, fontname=mapped_font, fontsize=font_size)
+                                font_name = mapped_font
+                                replace_fields_in_pdf.font_substitutions[original_font] = mapped_font
+                            except ValueError:
+                                font_name = None
+                        else:
+                            font_name = None
+                            
+                        # If no mapping worked, try the original font
+                        if font_name is None:
+                            try:
+                                fitz.get_text_length(value, fontname=original_font, fontsize=font_size)
+                                font_name = original_font
+                                replace_fields_in_pdf.font_substitutions[original_font] = original_font
+                            except ValueError:
+                                # Try fallback fonts
+                                for fallback_font in fallback_fonts:
+                                    try:
+                                        fitz.get_text_length(value, fontname=fallback_font, fontsize=font_size)
+                                        font_name = fallback_font
+                                        print(f"Using fallback font '{fallback_font}' instead of '{original_font}'")
+                                        replace_fields_in_pdf.font_substitutions[original_font] = fallback_font
+                                        break
+                                    except ValueError:
+                                        continue
+                                
+                                if font_name is None:  # If no fallback worked
+                                    font_name = "Helvetica"
+                                    print(f"Warning: Using Helvetica as fallback for '{original_font}'")
+                                    replace_fields_in_pdf.font_substitutions[original_font] = "Helvetica"
                     
                     # Create redaction annotation to completely remove the original text
                     redact = page.add_redact_annot(inst)
