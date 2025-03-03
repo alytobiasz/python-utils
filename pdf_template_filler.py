@@ -106,12 +106,20 @@ def replace_fields_in_pdf(pdf_path, output_path, data):
         data (dict): Dictionary of field names and their values
     """
     try:
-        # Create a mapping of all possible field variations
-        field_mapping = {}
-        for key, value in data.items():
-            variations = normalize_field_name(key)
-            for variant in variations:
-                field_mapping[f"[{variant}]"] = str(value) if value is not None else ''
+        # Create a mapping of all possible field variations - only do this once per template
+        if not hasattr(replace_fields_in_pdf, 'field_mapping'):
+            replace_fields_in_pdf.field_mapping = {}
+            replace_fields_in_pdf.font_substitutions = {}
+            for key, value in data.items():
+                variations = normalize_field_name(key)
+                for variant in variations:
+                    replace_fields_in_pdf.field_mapping[f"[{variant}]"] = str(value) if value is not None else ''
+        else:
+            # Update values in existing mapping
+            for key, value in data.items():
+                variations = normalize_field_name(key)
+                for variant in variations:
+                    replace_fields_in_pdf.field_mapping[f"[{variant}]"] = str(value) if value is not None else ''
         
         # Open the PDF
         doc = fitz.open(pdf_path)
@@ -125,7 +133,7 @@ def replace_fields_in_pdf(pdf_path, output_path, data):
         # Process each page
         for page_num, page in enumerate(doc):
             # Search for each field directly
-            for field, value in field_mapping.items():
+            for field, value in replace_fields_in_pdf.field_mapping.items():
                 # Find all instances of this field on the page
                 field_instances = page.search_for(field)
                 
@@ -147,22 +155,28 @@ def replace_fields_in_pdf(pdf_path, output_path, data):
                         font_size = 11
                         color = (0, 0, 0)
                     
-                    # Find suitable font
-                    font_name = original_font
-                    try:
-                        fitz.get_text_length(value, fontname=font_name, fontsize=font_size)
-                    except ValueError:
-                        for fallback_font in fallback_fonts:
-                            try:
-                                fitz.get_text_length(value, fontname=fallback_font, fontsize=font_size)
-                                font_name = fallback_font
-                                print(f"Using fallback font '{fallback_font}' instead of '{original_font}'")
-                                break
-                            except ValueError:
-                                continue
-                        if font_name == original_font:  # If no fallback worked
-                            font_name = "Helvetica"
-                            print(f"Warning: Using Helvetica as fallback for '{original_font}'")
+                    # Check if we've already found a substitution for this font
+                    if original_font in replace_fields_in_pdf.font_substitutions:
+                        font_name = replace_fields_in_pdf.font_substitutions[original_font]
+                    else:
+                        # Find suitable font
+                        font_name = original_font
+                        try:
+                            fitz.get_text_length(value, fontname=font_name, fontsize=font_size)
+                        except ValueError:
+                            for fallback_font in fallback_fonts:
+                                try:
+                                    fitz.get_text_length(value, fontname=fallback_font, fontsize=font_size)
+                                    font_name = fallback_font
+                                    print(f"Using fallback font '{fallback_font}' instead of '{original_font}'")
+                                    replace_fields_in_pdf.font_substitutions[original_font] = fallback_font
+                                    break
+                                except ValueError:
+                                    continue
+                            if font_name == original_font:  # If no fallback worked
+                                font_name = "Helvetica"
+                                print(f"Warning: Using Helvetica as fallback for '{original_font}'")
+                                replace_fields_in_pdf.font_substitutions[original_font] = "Helvetica"
                     
                     # Create redaction annotation to completely remove the original text
                     redact = page.add_redact_annot(inst)
@@ -271,7 +285,7 @@ def main():
         # Create output directory if it doesn't exist
         os.makedirs(output_directory, exist_ok=True)
         
-        # Find fields in PDF template
+        # Find fields in PDF template - do this once before processing rows
         template_fields = find_fields_in_pdf(pdf_template)
         print(f"\nFound {len(template_fields)} unique fields in PDF template:")
         print(", ".join(sorted(template_fields)))
@@ -281,7 +295,7 @@ def main():
         ws = wb.active
         headers = [cell.value for cell in ws[1]]
         
-        # Verify all template fields exist in Excel headers
+        # Verify all template fields exist in Excel headers - do this once before processing rows
         missing_fields = []
         for field in template_fields:
             field_variations = normalize_field_name(field)
@@ -291,7 +305,7 @@ def main():
         if missing_fields:
             raise ValueError(f"Fields in PDF template not found in Excel headers: {', '.join(missing_fields)}")
         
-        # Verify filename fields exist in headers if specified
+        # Verify filename fields exist in headers if specified - do this once before processing rows
         if filename_field1:
             variations1 = normalize_field_name(filename_field1)
             if not any(var in headers for var in variations1):
@@ -306,6 +320,13 @@ def main():
         
         if not filename_field1 and not filename_field2:
             print("No filename fields specified - using timestamps for output files")
+        
+        # Create field mapping variations once - this will be used for all rows
+        field_variations_map = {}
+        for field in template_fields:
+            variations = normalize_field_name(field)
+            for var in variations:
+                field_variations_map[var] = field
         
         # Count total non-empty rows
         total_files = sum(1 for row in ws.iter_rows(min_row=2) if any(cell.value for cell in row))
@@ -322,7 +343,7 @@ def main():
             start_time = time.time()
             
             try:
-                # Create data dictionary
+                # Create data dictionary using pre-computed field variations
                 data = {headers[i]: str(val) if val is not None else '' 
                        for i, val in enumerate(row)}
                 
