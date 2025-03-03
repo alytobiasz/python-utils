@@ -20,7 +20,7 @@ Usage:
        - Config file: Text file with the following format 
          (the filename fields specify how each output PDF is named):
             excel_file = path/to/data.xlsx
-            pdf_template = path/to/template.pdf
+            template = path/to/template.pdf
             output_directory = path/to/output
             filename_field1 = First Name
             filename_field2 = Last Name
@@ -314,7 +314,7 @@ def read_config(config_path):
         ValueError: If required fields are missing
     """
     config = {}
-    required_fields = ['excel_file', 'pdf_template', 'output_directory', 'filename_field1', 'filename_field2']
+    required_fields = ['excel_file', 'template', 'output_directory']
     
     try:
         with open(config_path, 'r') as f:
@@ -345,10 +345,10 @@ def main():
         
         # Extract configuration
         excel_file = config['excel_file']
-        pdf_template = config['pdf_template']
+        pdf_template = config['template']
         output_directory = config['output_directory']
-        filename_field1 = config['filename_field1']
-        filename_field2 = config['filename_field2']
+        filename_field1 = config.get('filename_field1', '')
+        filename_field2 = config.get('filename_field2', '')
         
         # Create output directory if it doesn't exist
         os.makedirs(output_directory, exist_ok=True)

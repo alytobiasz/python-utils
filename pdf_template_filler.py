@@ -22,7 +22,7 @@ Usage:
          the Excel should have a column header "First Name"
        - Config file: Text file with the following format:
             excel_file = path/to/data.xlsx
-            pdf_template = path/to/template.pdf
+            template = path/to/template.pdf
             output_directory = path/to/output
             filename_field1 = First Name  # Optional - uses timestamp if both fields omitted
             filename_field2 = Last Name   # Optional - uses timestamp if both fields omitted
@@ -259,7 +259,7 @@ def read_config(config_path):
         dict: Configuration parameters
     """
     config = {}
-    required_fields = ['excel_file', 'pdf_template', 'output_directory']
+    required_fields = ['excel_file', 'template', 'output_directory']
     
     try:
         with open(config_path, 'r') as f:
@@ -313,7 +313,7 @@ def main():
         
         # Extract configuration
         excel_file = config['excel_file']
-        pdf_template = config['pdf_template']
+        pdf_template = config['template']
         output_directory = config['output_directory']
         filename_field1 = config.get('filename_field1', '')
         filename_field2 = config.get('filename_field2', '')
