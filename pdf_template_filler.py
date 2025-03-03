@@ -146,7 +146,7 @@ def replace_fields_in_pdf(pdf_path, output_path, data):
         replacements_made = 0
         
         # Define fallback fonts in order of preference
-        fallback_fonts = ['Times-Roman', 'Helvetica', 'Arial']
+        fallback_fonts = ['Helvetica', 'Arial', 'Times-Roman']
         
         # Process each page
         for page_num, page in enumerate(doc):
