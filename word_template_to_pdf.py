@@ -230,36 +230,6 @@ def sanitize_filename(filename):
     
     return filename
 
-def save_with_permissions(doc, path):
-    """
-    Save a document with proper file permissions and extended attributes on macOS.
-    
-    Args:
-        doc: Word document object
-        path (str): Path where to save the document
-    """
-    # Save the document
-    doc.save(path)
-    
-    # Set file permissions to be readable and writable by the current user
-    import stat
-    os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)
-    
-    # On macOS, set extended attributes to allow Word to access the file
-    if platform.system() == 'Darwin':
-        try:
-            import xattr
-            # Remove any existing quarantine attribute
-            try:
-                xattr.removexattr(path, 'com.apple.quarantine')
-            except OSError:
-                pass
-            # Add custom attribute to mark as approved
-            xattr.setxattr(path, 'com.apple.macl', b'')
-        except ImportError:
-            print("Warning: xattr package not installed. File permissions may not be complete on macOS.")
-            print("To install: pip install xattr")
-
 def main():
     """Main function to process Word documents."""
     if len(sys.argv) != 2:
@@ -280,10 +250,6 @@ def main():
         
         # Create output directory if it doesn't exist
         os.makedirs(output_directory, exist_ok=True)
-        
-        # Set output directory permissions
-        import stat
-        os.chmod(output_directory, stat.S_IRWXU)  # Read, write, execute for user
         
         # Load the template to find fields
         template_doc = Document(word_template)
@@ -359,7 +325,7 @@ def main():
                 temp_doc = Document(word_template)
                 replace_fields_in_document(temp_doc, data)
                 
-                # Save Word document with proper permissions
+                # Save Word document if keeping it or as temporary file
                 docx_path = os.path.join(output_directory, f"{filename}.docx")
                 pdf_path = os.path.join(output_directory, f"{filename}.pdf")
                 
@@ -371,7 +337,8 @@ def main():
                     pdf_path = os.path.join(output_directory, f"{filename}.pdf")
                     counter += 1
                 
-                save_with_permissions(temp_doc, docx_path)
+                # Save the Word document
+                temp_doc.save(docx_path)
                 
                 # Convert to PDF
                 if convert_to_pdf(docx_path, pdf_path):
@@ -381,10 +348,7 @@ def main():
                     
                     # Remove Word document if not keeping it
                     if not keep_word and os.path.exists(docx_path):
-                        try:
-                            os.remove(docx_path)
-                        except PermissionError:
-                            print(f"Warning: Could not remove temporary file {docx_path}")
+                        os.remove(docx_path)
                 else:
                     print(f"Failed to convert to PDF: {filename}")
                     
