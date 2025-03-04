@@ -27,6 +27,7 @@ import sys
 import os
 import platform
 import time
+from datetime import datetime
 
 # Import the functions from both scripts
 from docx_template_filler import read_config, fill_docx_templates
@@ -48,17 +49,30 @@ def main():
         
         # Read configuration
         config = read_config(sys.argv[1])
-        output_dir = config['output_directory']
+        base_output_dir = config['output_directory']
         keep_word = config.get('keep_word_file', '').lower() == 'true'
+        
+        # Create timestamped directory if base directory exists and is not empty
+        if os.path.exists(base_output_dir) and os.listdir(base_output_dir):
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            output_dir = os.path.join(base_output_dir, f'batch_{timestamp}')
+            print(f"\nOutput directory not empty, creating new directory: {output_dir}")
+        else:
+            output_dir = base_output_dir
+            
+        # Create output directory
+        os.makedirs(output_dir, exist_ok=True)
+        
+        # Update config with new output directory
+        config['output_directory'] = output_dir
         
         # Step 1: Fill templates to create Word documents
         print("\nStep 1: Generating Word documents...")
-        docx_success, docx_total = fill_docx_templates(sys.argv[1])
+        docx_success, docx_total = fill_docx_templates(config)
         
         # Step 2: Convert Word documents to PDF
         print("\nStep 2: Converting to PDF...")
-        pdf_dir = os.path.join(output_dir, 'pdf_exports')
-        pdf_success, pdf_total = create_pdfs(output_dir, pdf_dir)
+        pdf_success, pdf_total = create_pdfs(output_dir, output_dir)
         
         # Clean up Word files if not keeping them
         if not keep_word:
@@ -75,7 +89,7 @@ def main():
         print(f"\nProcessing completed in {total_time:.1f} seconds")
         print(f"Word documents generated: {docx_success}/{docx_total}")
         print(f"PDF files created: {pdf_success}/{pdf_total}")
-        print(f"PDF files directory: {os.path.abspath(pdf_dir)}")
+        print(f"Output directory: {os.path.abspath(output_dir)}")
         if keep_word:
             print(f"Word files directory: {os.path.abspath(output_dir)}")
         

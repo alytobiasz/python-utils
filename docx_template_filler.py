@@ -174,19 +174,22 @@ def sanitize_filename(filename):
     
     return filename
 
-def fill_docx_templates(config_path):
+def fill_docx_templates(config):
     """
     Fill Word document templates with data from Excel.
     
     Args:
-        config_path (str): Path to the configuration file
+        config (dict): Configuration dictionary containing:
+            - excel_file: Path to Excel file with data
+            - template: Path to Word template file
+            - output_directory: Directory for output files
+            - filename_field1: Optional field for filename generation
+            - filename_field2: Optional field for filename generation
         
     Returns:
         tuple: (success_count, total_files) indicating number of successfully processed files
     """
     try:
-        config = read_config(config_path)
-        
         # Extract configuration
         excel_file = config['excel_file']
         word_template = config['template']
@@ -306,7 +309,8 @@ def main():
         print("Usage: python docx_template_filler.py <config_file>")
         sys.exit(1)
     
-    fill_docx_templates(sys.argv[1])
+    config = read_config(sys.argv[1])
+    fill_docx_templates(config)
 
 if __name__ == "__main__":
     main() 
