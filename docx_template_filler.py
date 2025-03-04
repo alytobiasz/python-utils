@@ -174,15 +174,18 @@ def sanitize_filename(filename):
     
     return filename
 
-def main():
-    """Main function to process Word documents."""
-    if len(sys.argv) != 2:
-        print("Usage: python docx_template_filler.py <config_file>")
-        sys.exit(1)
+def fill_docx_templates(config_path):
+    """
+    Fill Word document templates with data from Excel.
     
+    Args:
+        config_path (str): Path to the configuration file
+        
+    Returns:
+        tuple: (success_count, total_files) indicating number of successfully processed files
+    """
     try:
-        total_start_time = time.time()
-        config = read_config(sys.argv[1])
+        config = read_config(config_path)
         
         # Extract configuration
         excel_file = config['excel_file']
@@ -205,7 +208,7 @@ def main():
         ws = wb.active
         headers = [cell.value for cell in ws[1]]
         
-        # Verify all template fields exist in Excel headers (checking all variations)
+        # Verify all template fields exist in Excel headers
         missing_fields = []
         for field in template_fields:
             field_variations = normalize_field_name(field)
@@ -286,17 +289,24 @@ def main():
                 traceback.print_exc()
         
         # Print summary
-        total_time = time.time() - total_start_time
         print("\nProcessing Summary:")
         print(f"Total files processed: {success_count}/{total_files}")
-        print(f"Total processing time: {total_time:.1f} seconds")
-        print(f"Average time per file: {(total_time/total_files):.1f} seconds")
         print(f"Output directory: {os.path.abspath(output_directory)}")
+        
+        return success_count, total_files
         
     except Exception as e:
         print(f"Error: {str(e)}")
         traceback.print_exc()
         sys.exit(1)
+
+def main():
+    """Main function to handle command line arguments."""
+    if len(sys.argv) != 2:
+        print("Usage: python docx_template_filler.py <config_file>")
+        sys.exit(1)
+    
+    fill_docx_templates(sys.argv[1])
 
 if __name__ == "__main__":
     main() 

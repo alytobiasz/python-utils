@@ -117,36 +117,39 @@ def convert_to_pdf(docx_path, pdf_dir):
     elapsed_time = time.time() - start_time
     return success, f"{message} in {elapsed_time:.1f} seconds"
 
-def process_directory(directory):
+def create_pdfs(input_dir, pdf_dir=None):
     """
-    Process all .docx files in the specified directory.
+    Convert all Word (.docx) files in a directory to PDF format.
     
     Args:
-        directory (str): Path to the directory containing Word documents
+        input_dir (str): Path to the directory containing Word documents
+        pdf_dir (str, optional): Directory for PDF output. If None, creates 'pdf_exports' subdirectory
+        
+    Returns:
+        tuple: (success_count, total_files) indicating number of successfully converted files
     """
     try:
         # Verify directory exists
-        if not os.path.isdir(directory):
-            print(f"Error: Directory not found: {directory}")
-            sys.exit(1)
+        if not os.path.isdir(input_dir):
+            raise ValueError(f"Directory not found: {input_dir}")
         
-        # Create pdf_exports directory
-        pdf_dir = os.path.join(directory, 'pdf_exports')
+        # Set up PDF output directory
+        if pdf_dir is None:
+            pdf_dir = os.path.join(input_dir, 'pdf_exports')
         os.makedirs(pdf_dir, exist_ok=True)
         
         # Find all .docx files in the directory
-        docx_files = [os.path.join(directory, f) for f in os.listdir(directory) 
-                     if f.endswith('.docx') and os.path.isfile(os.path.join(directory, f))]
+        docx_files = [os.path.join(input_dir, f) for f in os.listdir(input_dir) 
+                     if f.endswith('.docx') and os.path.isfile(os.path.join(input_dir, f))]
         
         if not docx_files:
             print("No .docx files found in the specified directory.")
-            return
+            return 0, 0
         
         print(f"\nFound {len(docx_files)} .docx files to process")
         print(f"Output directory: {os.path.abspath(pdf_dir)}")
         
         # Process files sequentially (Word doesn't handle parallel processing well)
-        total_start_time = time.time()
         success_count = 0
         
         for i, docx_file in enumerate(docx_files, 1):
@@ -156,12 +159,11 @@ def process_directory(directory):
             print(f"[{i}/{len(docx_files)}] {message}")
         
         # Print summary
-        total_time = time.time() - total_start_time
         print("\nProcessing Summary:")
         print(f"Total files processed: {success_count}/{len(docx_files)}")
-        print(f"Total processing time: {total_time:.1f} seconds")
-        print(f"Average time per file: {(total_time/len(docx_files)):.1f} seconds")
         print(f"Output directory: {os.path.abspath(pdf_dir)}")
+        
+        return success_count, len(docx_files)
         
     except Exception as e:
         print(f"Error: {str(e)}")
@@ -170,7 +172,7 @@ def process_directory(directory):
         sys.exit(1)
 
 def main():
-    """Main function to handle command line arguments and start processing."""
+    """Main function to handle command line arguments."""
     if len(sys.argv) != 2:
         print("Usage: python docx_to_pdf.py <directory_path>")
         sys.exit(1)
@@ -180,8 +182,7 @@ def main():
         print("Error: This script only supports Windows and macOS")
         sys.exit(1)
     
-    directory = sys.argv[1]
-    process_directory(directory)
+    create_pdfs(sys.argv[1])
 
 if __name__ == "__main__":
     main() 
