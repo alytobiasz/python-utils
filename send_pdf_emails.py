@@ -85,14 +85,21 @@ def read_mapping_file(mapping_file, email_column, pdf_column):
     """Read the CSV mapping file and return a dictionary of PDF filenames to email addresses."""
     mapping = {}
     try:
-        with open(mapping_file, 'r', encoding='utf-8') as f:
+        with open(mapping_file, 'r', encoding='utf-8-sig') as f:  # Changed to utf-8-sig to handle BOM
             reader = csv.DictReader(f)
+            
+            # Debug print
+            print(f"Looking for columns: '{email_column}' and '{pdf_column}'")
+            print(f"\nFound CSV columns: {reader.fieldnames}")
+            
+            # Clean up fieldnames to remove any BOM characters
+            reader.fieldnames = [field.strip('\ufeff') for field in reader.fieldnames]
             
             # Verify required columns exist
             if email_column not in reader.fieldnames:
-                raise ValueError(f"Email column '{email_column}' not found in mapping file")
+                raise ValueError(f"Email column '{email_column}' not found in mapping file. Available columns: {reader.fieldnames}")
             if pdf_column not in reader.fieldnames:
-                raise ValueError(f"PDF column '{pdf_column}' not found in mapping file")
+                raise ValueError(f"PDF column '{pdf_column}' not found in mapping file. Available columns: {reader.fieldnames}")
             
             # Read mappings
             for row in reader:
