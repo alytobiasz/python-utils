@@ -27,7 +27,7 @@ Example config.txt:
     # Email Settings
     from_email = sender@my-domain.com   # Email address to send from (required)
     email_subject = Your Document
-    email_body = Please find your document attached.
+    email_body_file = email_body.txt    # Path to file containing email body text
     
     # File Locations
     input_directory = path/to/pdf/files
@@ -61,12 +61,20 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
 
+def read_email_body(body_file):
+    """Read the email body text from a file."""
+    try:
+        with open(body_file, 'r', encoding='utf-8') as f:
+            return f.read().strip()
+    except Exception as e:
+        raise ValueError(f"Error reading email body file: {str(e)}")
+
 def read_config(config_path):
     """Read and validate the configuration file."""
     config = {}
     required_fields = [
         'smtp_server', 'smtp_port', 'input_directory', 'mapping_file',
-        'email_column', 'pdf_column', 'email_subject', 'email_body',
+        'email_column', 'pdf_column', 'email_subject', 'email_body_file',
         'from_email'  # Required for From address when not using authentication
     ]
     
@@ -95,6 +103,9 @@ def read_config(config_path):
         if config['use_auth']:
             if 'smtp_username' not in config or 'smtp_password' not in config:
                 raise ValueError("SMTP username and password are required when use_auth is true")
+        
+        # Read email body from file
+        config['email_body'] = read_email_body(config['email_body_file'])
         
         # Handle BCC recipients
         if 'bcc_recipients' in config:
