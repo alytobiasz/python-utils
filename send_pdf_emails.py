@@ -123,6 +123,8 @@ def read_mapping_file(mapping_file, email_column, pdf_column):
 
 def send_email(smtp_config, to_email, subject, body, attachment_path, test_mode=False):
     """Send an email with a PDF attachment."""
+    start_time = time.time()
+    
     # Create message
     msg = MIMEMultipart()
     msg['From'] = smtp_config['smtp_username']
@@ -158,9 +160,13 @@ def send_email(smtp_config, to_email, subject, body, attachment_path, test_mode=
             server.starttls()
             server.login(smtp_config['smtp_username'], smtp_config['smtp_password'])
             server.send_message(msg)
+            
+        elapsed_time = time.time() - start_time
+        print(f"Email sent to {to_email} ({filename}) - took {elapsed_time:.2f} seconds")
         return True
     except Exception as e:
-        print(f"Error sending email to {to_email}: {str(e)}")
+        elapsed_time = time.time() - start_time
+        print(f"Error sending email to {to_email} ({filename}) after {elapsed_time:.2f} seconds: {str(e)}")
         return False
 
 def main():
@@ -170,6 +176,7 @@ def main():
     
     try:
         start_time = time.time()
+        total_email_time = 0
         
         # Read configuration
         config = read_config(sys.argv[1])
@@ -198,28 +205,19 @@ def main():
         
         print(f"\nProcessing PDF files in: {input_dir}")
         if config['test_mode']:
-            print("Running in TEST MODE - no emails will be sent")
+            print("(TEST MODE - Emails will not be sent)")
         
-        # Get list of available PDF files
-        available_pdfs = {f.lower(): f for f in os.listdir(input_dir) if f.lower().endswith('.pdf')}
-        
-        # Process each mapping
         for pdf_file, email in mapping.items():
             total_count += 1
-            pdf_lower = pdf_file.lower()
+            pdf_path = os.path.join(input_dir, pdf_file)
             
-            # Check if PDF exists (case-insensitive)
-            if pdf_lower not in available_pdfs:
-                print(f"\nWarning: PDF file not found: {pdf_file}")
+            if not os.path.isfile(pdf_path):
+                print(f"PDF file not found: {pdf_file}")
                 not_found_count += 1
                 continue
             
-            actual_filename = available_pdfs[pdf_lower]
-            print(f"\nProcessing: {actual_filename} -> {email}")
-            file_path = os.path.join(input_dir, actual_filename)
-            
-            # Send email
-            if send_email(
+            email_start_time = time.time()
+            success = send_email(
                 smtp_config={
                     'smtp_server': config['smtp_server'],
                     'smtp_port': config['smtp_port'],
@@ -229,23 +227,31 @@ def main():
                 to_email=email,
                 subject=config['email_subject'],
                 body=config['email_body'],
-                attachment_path=file_path,
+                attachment_path=pdf_path,
                 test_mode=config['test_mode']
-            ):
+            )
+            
+            if success:
                 success_count += 1
+                total_email_time += (time.time() - email_start_time)
+            else:
+                skipped_count += 1
         
-        # Print completion message
-        elapsed_time = time.time() - start_time
-        print(f"\nProcessing completed in {elapsed_time:.1f} seconds")
-        print(f"Emails {('would be ' if config['test_mode'] else '')}sent: {success_count}/{total_count}")
-        if not_found_count > 0:
-            print(f"PDF files not found: {not_found_count}")
+        # Print summary
+        total_time = time.time() - start_time
+        avg_email_time = total_email_time / success_count if success_count > 0 else 0
+        
+        print("\nSummary:")
+        print(f"Total time: {total_time:.2f} seconds")
+        print(f"Average time per email: {avg_email_time:.2f} seconds")
+        print(f"Total files processed: {total_count}")
+        print(f"Successfully sent: {success_count}")
+        print(f"Files not found: {not_found_count}")
+        print(f"Errors/skipped: {skipped_count}")
         
     except Exception as e:
-        print(f"Error: {str(e)}")
-        import traceback
-        traceback.print_exc()
+        print(f"\nError: {str(e)}")
         sys.exit(1)
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main() 
