@@ -8,24 +8,36 @@ The CSV file should have two columns:
 
 Requirements:
     - Python 3.6+
-    - Valid SMTP server credentials
+    - SMTP server settings
 
 Usage:
     python send_pdf_emails.py <config_file>
 
 Example config.txt:
-    smtp_server = smtp.gmail.com
-    smtp_port = 587
+    # SMTP Server Settings
+    smtp_server = smtp.my-relay.com     # e.g., smtp.gmail.com for Gmail, smtp.office365.com for Outlook
+    smtp_port = 25                      # 25 for non-TLS, 587 for TLS (Gmail/Outlook)
+    use_tls = false                     # true for Gmail/Outlook, false for basic SMTP relay
+    use_auth = false                    # true if server requires username/password
+    
+    # Authentication (required only if use_auth = true)
     smtp_username = your.email@gmail.com
-    smtp_password = your_password
+    smtp_password = your_app_password
+    
+    # Email Settings
+    from_email = sender@my-domain.com   # Email address to send from (required)
     email_subject = Your Document
     email_body = Please find your document attached.
+    
+    # File Locations
     input_directory = path/to/pdf/files
     mapping_file = path/to/mapping.csv
     email_column = Email Address
     pdf_column = PDF Filename
-    bcc_recipients = archive@company.com, supervisor@company.com  # Optional - comma-separated list of BCC recipients
-    test_mode = true  # Optional - if true, prints email info without sending
+    
+    # Optional Settings
+    bcc_recipients = archive@company.com, supervisor@company.com  # Optional - comma-separated list
+    test_mode = true                    # Optional - if true, prints email info without sending
 
 Note for Gmail Users:
     If using Gmail, you must use an App Password instead of your regular password.
@@ -53,9 +65,9 @@ def read_config(config_path):
     """Read and validate the configuration file."""
     config = {}
     required_fields = [
-        'smtp_server', 'smtp_port', 'smtp_username', 'smtp_password',
-        'email_subject', 'email_body', 'input_directory', 'mapping_file',
-        'email_column', 'pdf_column'
+        'smtp_server', 'smtp_port', 'input_directory', 'mapping_file',
+        'email_column', 'pdf_column', 'email_subject', 'email_body',
+        'from_email'  # Required for From address when not using authentication
     ]
     
     try:
@@ -74,8 +86,15 @@ def read_config(config_path):
         # Convert port to integer
         config['smtp_port'] = int(config['smtp_port'])
         
-        # Set default for test_mode
+        # Set defaults for optional settings
         config['test_mode'] = config.get('test_mode', '').lower() == 'true'
+        config['use_tls'] = config.get('use_tls', '').lower() == 'true'
+        config['use_auth'] = config.get('use_auth', '').lower() == 'true'
+        
+        # Validate auth credentials if auth is enabled
+        if config['use_auth']:
+            if 'smtp_username' not in config or 'smtp_password' not in config:
+                raise ValueError("SMTP username and password are required when use_auth is true")
         
         # Handle BCC recipients
         if 'bcc_recipients' in config:
@@ -139,7 +158,8 @@ def send_email(smtp_config, to_email, subject, body, attachment_path, test_mode=
     
     # Create message
     msg = MIMEMultipart()
-    msg['From'] = smtp_config['smtp_username']
+    # Use smtp_username if auth is enabled, otherwise use from_email from config
+    msg['From'] = smtp_config.get('smtp_username') if smtp_config.get('use_auth') else smtp_config['from_email']
     msg['To'] = to_email
     msg['Subject'] = subject
     
@@ -167,6 +187,7 @@ def send_email(smtp_config, to_email, subject, body, attachment_path, test_mode=
     
     if test_mode:
         print(f"\n{progress_info}Would send email:")
+        print(f"From: {msg['From']}")
         print(f"To: {to_email}")
         if 'bcc_recipients' in smtp_config and smtp_config['bcc_recipients']:
             print(f"Bcc: {', '.join(smtp_config['bcc_recipients'])}")
@@ -177,8 +198,10 @@ def send_email(smtp_config, to_email, subject, body, attachment_path, test_mode=
     # Send email
     try:
         with smtplib.SMTP(smtp_config['smtp_server'], smtp_config['smtp_port']) as server:
-            server.starttls()
-            server.login(smtp_config['smtp_username'], smtp_config['smtp_password'])
+            if smtp_config.get('use_tls', False):
+                server.starttls()
+            if smtp_config.get('use_auth', False):
+                server.login(smtp_config['smtp_username'], smtp_config['smtp_password'])
             server.send_message(msg)
             
         elapsed_time = time.time() - start_time
@@ -225,6 +248,10 @@ def main():
         not_found_count = 0
         
         print(f"\nProcessing {total_count} emails from PDF files in: {input_dir}")
+        print(f"SMTP Server: {config['smtp_server']}:{config['smtp_port']}")
+        print(f"From: {config.get('smtp_username') if config.get('use_auth') else config['from_email']}")
+        print(f"TLS: {'Enabled' if config.get('use_tls') else 'Disabled'}")
+        print(f"Authentication: {'Enabled' if config.get('use_auth') else 'Disabled'}")
         if config['test_mode']:
             print("(TEST MODE - Emails will not be sent)")
         if config['bcc_recipients']:
@@ -244,8 +271,11 @@ def main():
                 smtp_config={
                     'smtp_server': config['smtp_server'],
                     'smtp_port': config['smtp_port'],
-                    'smtp_username': config['smtp_username'],
-                    'smtp_password': config['smtp_password'],
+                    'use_tls': config.get('use_tls', False),
+                    'use_auth': config.get('use_auth', False),
+                    'smtp_username': config.get('smtp_username', ''),
+                    'smtp_password': config.get('smtp_password', ''),
+                    'from_email': config['from_email'],
                     'bcc_recipients': config['bcc_recipients']
                 },
                 to_email=email,
