@@ -124,7 +124,7 @@ def read_config(config_path):
         raise ValueError(f"Error reading config file: {str(e)}")
 
 def read_mapping_file(mapping_file, email_column, pdf_column):
-    """Read the CSV mapping file and return a dictionary of PDF filenames to email addresses."""
+    """Read the CSV mapping file and return a dictionary of PDF filenames to lists of email addresses."""
     mapping = {}
     try:
         with open(mapping_file, 'r', encoding='utf-8-sig') as f:  # Changed to utf-8-sig to handle BOM
@@ -155,8 +155,14 @@ def read_mapping_file(mapping_file, email_column, pdf_column):
                     if '@' not in email:
                         print(f"Warning: Skipping invalid email address: {email}")
                         continue
-                        
-                    mapping[pdf_file] = email
+                    
+                    # Initialize list for PDF if not exists
+                    if pdf_file not in mapping:
+                        mapping[pdf_file] = []
+                    
+                    # Add email to list if not already present
+                    if email not in mapping[pdf_file]:
+                        mapping[pdf_file].append(email)
         
         return mapping
         
@@ -251,14 +257,16 @@ def main():
         if not mapping:
             raise ValueError("No valid mappings found in mapping file")
         
+        # Calculate total number of emails to send
+        total_emails = sum(len(emails) for emails in mapping.values())
+        
         # Process PDF files
         success_count = 0
-        total_count = len(mapping)
         current_count = 0
         skipped_count = 0
         not_found_count = 0
         
-        print(f"\nProcessing {total_count} emails from PDF files in: {input_dir}")
+        print(f"\nProcessing {total_emails} emails using {len(mapping)} PDF files from: {input_dir}")
         print(f"SMTP Server: {config['smtp_server']}:{config['smtp_port']}")
         print(f"From: {config.get('smtp_username') if config.get('use_auth') else config['from_email']}")
         print(f"TLS: {'Enabled' if config.get('use_tls') else 'Disabled'}")
@@ -268,40 +276,42 @@ def main():
         if config['bcc_recipients']:
             print(f"BCC recipients: {', '.join(config['bcc_recipients'])}")
         
-        for pdf_file, email in mapping.items():
-            current_count += 1
+        for pdf_file, emails in mapping.items():
             pdf_path = os.path.join(input_dir, pdf_file)
             
             if not os.path.isfile(pdf_path):
-                print(f"[{current_count}/{total_count}] PDF file not found: {pdf_file}")
-                not_found_count += 1
+                print(f"PDF file not found: {pdf_file} (skipping {len(emails)} recipient(s))")
+                not_found_count += len(emails)
                 continue
             
-            email_start_time = time.time()
-            success = send_email(
-                smtp_config={
-                    'smtp_server': config['smtp_server'],
-                    'smtp_port': config['smtp_port'],
-                    'use_tls': config.get('use_tls', False),
-                    'use_auth': config.get('use_auth', False),
-                    'smtp_username': config.get('smtp_username', ''),
-                    'smtp_password': config.get('smtp_password', ''),
-                    'from_email': config['from_email'],
-                    'bcc_recipients': config['bcc_recipients']
-                },
-                to_email=email,
-                subject=config['email_subject'],
-                body=config['email_body'],
-                attachment_path=pdf_path,
-                test_mode=config['test_mode'],
-                progress=(current_count, total_count)
-            )
-            
-            if success:
-                success_count += 1
-                total_email_time += (time.time() - email_start_time)
-            else:
-                skipped_count += 1
+            # Send to each recipient for this PDF
+            for email in emails:
+                current_count += 1
+                email_start_time = time.time()
+                success = send_email(
+                    smtp_config={
+                        'smtp_server': config['smtp_server'],
+                        'smtp_port': config['smtp_port'],
+                        'use_tls': config.get('use_tls', False),
+                        'use_auth': config.get('use_auth', False),
+                        'smtp_username': config.get('smtp_username', ''),
+                        'smtp_password': config.get('smtp_password', ''),
+                        'from_email': config['from_email'],
+                        'bcc_recipients': config['bcc_recipients']
+                    },
+                    to_email=email,
+                    subject=config['email_subject'],
+                    body=config['email_body'],
+                    attachment_path=pdf_path,
+                    test_mode=config['test_mode'],
+                    progress=(current_count, total_emails)
+                )
+                
+                if success:
+                    success_count += 1
+                    total_email_time += (time.time() - email_start_time)
+                else:
+                    skipped_count += 1
         
         # Print summary
         total_time = time.time() - start_time
@@ -310,7 +320,7 @@ def main():
         print("\nSummary:")
         print(f"Total time: {total_time:.2f} seconds")
         print(f"Average time per email: {avg_email_time:.2f} seconds")
-        print(f"Total files processed: {total_count}")
+        print(f"Total emails to send: {total_emails}")
         print(f"Successfully sent: {success_count}")
         print(f"Files not found: {not_found_count}")
         print(f"Errors/skipped: {skipped_count}")
