@@ -35,6 +35,9 @@ Example config.txt:
     email_column = Email Address
     pdf_column = PDF Filename
     
+    # Performance Settings
+    max_threads = 4                     # Optional - number of concurrent email sending threads (default: 4)
+    
     # Optional Settings
     bcc_recipients = archive@company.com, supervisor@company.com  # Optional - comma-separated list
     test_mode = true                    # Optional - if true, prints email info without sending
@@ -55,11 +58,28 @@ import os
 import smtplib
 import time
 import csv
+import threading
+import concurrent.futures
 from email import encoders
 from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
+
+# Thread-local storage for SMTP connections
+thread_local = threading.local()
+
+def get_smtp_connection(smtp_config):
+    """Get or create an SMTP connection for the current thread."""
+    if not hasattr(thread_local, "smtp"):
+        # Create new SMTP connection for this thread
+        smtp = smtplib.SMTP(smtp_config['smtp_server'], smtp_config['smtp_port'])
+        if smtp_config.get('use_tls', False):
+            smtp.starttls()
+        if smtp_config.get('use_auth', False):
+            smtp.login(smtp_config['smtp_username'], smtp_config['smtp_password'])
+        thread_local.smtp = smtp
+    return thread_local.smtp
 
 def read_email_body(body_file):
     """Read the email body text from a file."""
@@ -214,13 +234,10 @@ def send_email(smtp_config, to_email, subject, body, attachment_path, test_mode=
     
     # Send email
     try:
-        with smtplib.SMTP(smtp_config['smtp_server'], smtp_config['smtp_port']) as server:
-            if smtp_config.get('use_tls', False):
-                server.starttls()
-            if smtp_config.get('use_auth', False):
-                server.login(smtp_config['smtp_username'], smtp_config['smtp_password'])
-            server.send_message(msg)
-            
+        if not test_mode:
+            smtp = get_smtp_connection(smtp_config)
+            smtp.send_message(msg)
+        
         elapsed_time = time.time() - start_time
         print(f"{progress_info}Email sent to {to_email} ({filename}) - took {elapsed_time:.2f} seconds")
         return True
@@ -228,6 +245,21 @@ def send_email(smtp_config, to_email, subject, body, attachment_path, test_mode=
         elapsed_time = time.time() - start_time
         print(f"{progress_info}Error sending email to {to_email} ({filename}) after {elapsed_time:.2f} seconds: {str(e)}")
         return False
+
+def process_email(args):
+    """Process a single email send operation."""
+    smtp_config, email, pdf_path, config, current_count, total_emails = args
+    email_start_time = time.time()
+    success = send_email(
+        smtp_config=smtp_config,
+        to_email=email,
+        subject=config['email_subject'],
+        body=config['email_body'],
+        attachment_path=pdf_path,
+        test_mode=config['test_mode'],
+        progress=(current_count, total_emails)
+    )
+    return success, time.time() - email_start_time
 
 def main():
     if len(sys.argv) != 2:
@@ -241,6 +273,9 @@ def main():
         # Read configuration
         config = read_config(sys.argv[1])
         input_dir = config['input_directory']
+        
+        # Get number of threads from config or use default
+        max_threads = int(config.get('max_threads', '4'))
         
         # Verify input directory exists
         if not os.path.isdir(input_dir):
@@ -267,6 +302,7 @@ def main():
         not_found_count = 0
         
         print(f"\nProcessing {total_emails} emails using {len(mapping)} PDF files from: {input_dir}")
+        print(f"Using {max_threads} threads for parallel processing")
         print(f"SMTP Server: {config['smtp_server']}:{config['smtp_port']}")
         print(f"From: {config.get('smtp_username') if config.get('use_auth') else config['from_email']}")
         print(f"TLS: {'Enabled' if config.get('use_tls') else 'Disabled'}")
@@ -276,6 +312,8 @@ def main():
         if config['bcc_recipients']:
             print(f"BCC recipients: {', '.join(config['bcc_recipients'])}")
         
+        # Prepare email tasks
+        email_tasks = []
         for pdf_file, emails in mapping.items():
             pdf_path = os.path.join(input_dir, pdf_file)
             
@@ -284,32 +322,30 @@ def main():
                 not_found_count += len(emails)
                 continue
             
-            # Send to each recipient for this PDF
+            # Create tasks for each email recipient
             for email in emails:
                 current_count += 1
-                email_start_time = time.time()
-                success = send_email(
-                    smtp_config={
-                        'smtp_server': config['smtp_server'],
-                        'smtp_port': config['smtp_port'],
-                        'use_tls': config.get('use_tls', False),
-                        'use_auth': config.get('use_auth', False),
-                        'smtp_username': config.get('smtp_username', ''),
-                        'smtp_password': config.get('smtp_password', ''),
-                        'from_email': config['from_email'],
-                        'bcc_recipients': config['bcc_recipients']
-                    },
-                    to_email=email,
-                    subject=config['email_subject'],
-                    body=config['email_body'],
-                    attachment_path=pdf_path,
-                    test_mode=config['test_mode'],
-                    progress=(current_count, total_emails)
-                )
-                
+                smtp_config = {
+                    'smtp_server': config['smtp_server'],
+                    'smtp_port': config['smtp_port'],
+                    'use_tls': config.get('use_tls', False),
+                    'use_auth': config.get('use_auth', False),
+                    'smtp_username': config.get('smtp_username', ''),
+                    'smtp_password': config.get('smtp_password', ''),
+                    'from_email': config['from_email'],
+                    'bcc_recipients': config['bcc_recipients']
+                }
+                email_tasks.append((smtp_config, email, pdf_path, config, current_count, total_emails))
+        
+        # Process emails in parallel using thread pool
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_threads) as executor:
+            results = list(executor.map(process_email, email_tasks))
+            
+            # Process results
+            for success, email_time in results:
                 if success:
                     success_count += 1
-                    total_email_time += (time.time() - email_start_time)
+                    total_email_time += email_time
                 else:
                     skipped_count += 1
         
@@ -328,6 +364,13 @@ def main():
     except Exception as e:
         print(f"\nError: {str(e)}")
         sys.exit(1)
+    finally:
+        # Clean up any remaining SMTP connections
+        if hasattr(thread_local, "smtp"):
+            try:
+                thread_local.smtp.quit()
+            except:
+                pass
 
 if __name__ == '__main__':
     main() 
