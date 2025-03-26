@@ -24,6 +24,7 @@ Example config.txt:
     mapping_file = path/to/mapping.csv
     email_column = Email Address
     pdf_column = PDF Filename
+    bcc_recipients = archive@company.com, supervisor@company.com  # Optional - comma-separated list of BCC recipients
     test_mode = true  # Optional - if true, prints email info without sending
 
 Note for Gmail Users:
@@ -76,6 +77,17 @@ def read_config(config_path):
         # Set default for test_mode
         config['test_mode'] = config.get('test_mode', '').lower() == 'true'
         
+        # Handle BCC recipients
+        if 'bcc_recipients' in config:
+            # Split by comma and strip whitespace
+            config['bcc_recipients'] = [
+                email.strip() 
+                for email in config['bcc_recipients'].split(',')
+                if email.strip()
+            ]
+        else:
+            config['bcc_recipients'] = []
+        
         return config
         
     except Exception as e:
@@ -121,7 +133,7 @@ def read_mapping_file(mapping_file, email_column, pdf_column):
     except Exception as e:
         raise ValueError(f"Error reading mapping file: {str(e)}")
 
-def send_email(smtp_config, to_email, subject, body, attachment_path, test_mode=False):
+def send_email(smtp_config, to_email, subject, body, attachment_path, test_mode=False, progress=None):
     """Send an email with a PDF attachment."""
     start_time = time.time()
     
@@ -130,6 +142,10 @@ def send_email(smtp_config, to_email, subject, body, attachment_path, test_mode=
     msg['From'] = smtp_config['smtp_username']
     msg['To'] = to_email
     msg['Subject'] = subject
+    
+    # Add BCC recipients if configured
+    if 'bcc_recipients' in smtp_config and smtp_config['bcc_recipients']:
+        msg['Bcc'] = ', '.join(smtp_config['bcc_recipients'])
     
     # Add body
     msg.attach(MIMEText(body, 'plain'))
@@ -147,9 +163,13 @@ def send_email(smtp_config, to_email, subject, body, attachment_path, test_mode=
     )
     msg.attach(part)
     
+    progress_info = f"[{progress[0]}/{progress[1]}] " if progress else ""
+    
     if test_mode:
-        print(f"\nWould send email:")
+        print(f"\n{progress_info}Would send email:")
         print(f"To: {to_email}")
+        if 'bcc_recipients' in smtp_config and smtp_config['bcc_recipients']:
+            print(f"Bcc: {', '.join(smtp_config['bcc_recipients'])}")
         print(f"Subject: {subject}")
         print(f"Attachment: {filename}")
         return True
@@ -162,11 +182,11 @@ def send_email(smtp_config, to_email, subject, body, attachment_path, test_mode=
             server.send_message(msg)
             
         elapsed_time = time.time() - start_time
-        print(f"Email sent to {to_email} ({filename}) - took {elapsed_time:.2f} seconds")
+        print(f"{progress_info}Email sent to {to_email} ({filename}) - took {elapsed_time:.2f} seconds")
         return True
     except Exception as e:
         elapsed_time = time.time() - start_time
-        print(f"Error sending email to {to_email} ({filename}) after {elapsed_time:.2f} seconds: {str(e)}")
+        print(f"{progress_info}Error sending email to {to_email} ({filename}) after {elapsed_time:.2f} seconds: {str(e)}")
         return False
 
 def main():
@@ -199,20 +219,23 @@ def main():
         
         # Process PDF files
         success_count = 0
-        total_count = 0
+        total_count = len(mapping)
+        current_count = 0
         skipped_count = 0
         not_found_count = 0
         
-        print(f"\nProcessing PDF files in: {input_dir}")
+        print(f"\nProcessing {total_count} emails from PDF files in: {input_dir}")
         if config['test_mode']:
             print("(TEST MODE - Emails will not be sent)")
+        if config['bcc_recipients']:
+            print(f"BCC recipients: {', '.join(config['bcc_recipients'])}")
         
         for pdf_file, email in mapping.items():
-            total_count += 1
+            current_count += 1
             pdf_path = os.path.join(input_dir, pdf_file)
             
             if not os.path.isfile(pdf_path):
-                print(f"PDF file not found: {pdf_file}")
+                print(f"[{current_count}/{total_count}] PDF file not found: {pdf_file}")
                 not_found_count += 1
                 continue
             
@@ -222,13 +245,15 @@ def main():
                     'smtp_server': config['smtp_server'],
                     'smtp_port': config['smtp_port'],
                     'smtp_username': config['smtp_username'],
-                    'smtp_password': config['smtp_password']
+                    'smtp_password': config['smtp_password'],
+                    'bcc_recipients': config['bcc_recipients']
                 },
                 to_email=email,
                 subject=config['email_subject'],
                 body=config['email_body'],
                 attachment_path=pdf_path,
-                test_mode=config['test_mode']
+                test_mode=config['test_mode'],
+                progress=(current_count, total_count)
             )
             
             if success:
