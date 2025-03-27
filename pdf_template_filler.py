@@ -5,7 +5,7 @@
 PDF Template Filler
 
 This script replaces bracketed fields in a PDF document with values from an Excel file.
-For example, it will replace [First Name] or [First_Name] with "John" based on Excel data.
+For example, it will replace [First Name] with "John" based on Excel data.
 
 Requirements:
     - Python 3.6 or higher
@@ -21,12 +21,12 @@ Usage:
          (without the brackets). For example, if [First Name] is in the PDF,
          the Excel should have a column header "First Name"
        - Config file: Text file with the following format:
-            excel_file = path/to/data.xlsx
-            template = path/to/template.pdf
-            output_directory = path/to/output
-            filename_field1 = First Name  # Optional - uses timestamp if both fields omitted
-            filename_field2 = Last Name   # Optional - uses timestamp if both fields omitted
-
+             excel_file = path/to/data.xlsx
+             template = path/to/template.pdf
+             output_directory = path/to/output
+             filename_field1 = First Name  # Optional - uses timestamp if both fields omitted
+             filename_field2 = Last Name   # Optional - uses timestamp if both fields omitted
+    
     2. Run the script:
        python pdf_template_fill.py <config_file>
     
@@ -35,7 +35,8 @@ Usage:
 
 Note:
     - Field names in PDF must match Excel headers exactly (excluding brackets)
-    - Fields are case-sensitive: [First_Name] ≠ [first_name]
+    - Field names are case-sensitive and space-sensitive: [First Name] ≠ [First_Name] ≠ [first name]
+    - No automatic normalization of field names is performed
     - Output files will be named using the specified fields (or timestamp if omitted)
     - The script preserves all PDF formatting, images, and other content
 """
@@ -48,22 +49,6 @@ import time
 from openpyxl import load_workbook
 import traceback
 import fitz  # PyMuPDF
-
-def normalize_field_name(name):
-    """
-    Normalize field names by converting spaces to underscores and vice versa.
-    This allows matching both [First Name] and [First_Name] formats.
-    
-    Args:
-        name (str): Field name to normalize
-        
-    Returns:
-        list: List of possible field name variations
-    """
-    name = name.strip()
-    with_spaces = name.replace('_', ' ')
-    with_underscores = name.replace(' ', '_')
-    return list(set([name, with_spaces, with_underscores]))
 
 def find_fields_in_pdf(pdf_path):
     """
@@ -106,7 +91,7 @@ def replace_fields_in_pdf(pdf_path, output_path, data):
         data (dict): Dictionary of field names and their values
     """
     try:
-        # Create a mapping of all possible field variations - only do this once per template
+        # Create a mapping of field names to values - only do this once per template
         if not hasattr(replace_fields_in_pdf, 'field_mapping'):
             replace_fields_in_pdf.field_mapping = {}
             replace_fields_in_pdf.font_substitutions = {}
@@ -129,15 +114,11 @@ def replace_fields_in_pdf(pdf_path, output_path, data):
             }
             
             for key, value in data.items():
-                variations = normalize_field_name(key)
-                for variant in variations:
-                    replace_fields_in_pdf.field_mapping[f"[{variant}]"] = str(value) if value is not None else ''
+                replace_fields_in_pdf.field_mapping[f"[{key}]"] = str(value) if value is not None else ''
         else:
             # Update values in existing mapping
             for key, value in data.items():
-                variations = normalize_field_name(key)
-                for variant in variations:
-                    replace_fields_in_pdf.field_mapping[f"[{variant}]"] = str(value) if value is not None else ''
+                replace_fields_in_pdf.field_mapping[f"[{key}]"] = str(value) if value is not None else ''
         
         # Open the PDF
         doc = fitz.open(pdf_path)
@@ -334,35 +315,21 @@ def main():
         # Verify all template fields exist in Excel headers - do this once before processing rows
         missing_fields = []
         for field in template_fields:
-            field_variations = normalize_field_name(field)
-            if not any(var in headers for var in field_variations):
+            if field not in headers:
                 missing_fields.append(field)
         
         if missing_fields:
             raise ValueError(f"Fields in PDF template not found in Excel headers: {', '.join(missing_fields)}")
         
         # Verify filename fields exist in headers if specified - do this once before processing rows
-        if filename_field1:
-            variations1 = normalize_field_name(filename_field1)
-            if not any(var in headers for var in variations1):
-                raise ValueError(f"Specified filename field '{filename_field1}' not found in Excel headers")
-            filename_field1 = next(var for var in variations1 if var in headers)
-            
-        if filename_field2:
-            variations2 = normalize_field_name(filename_field2)
-            if not any(var in headers for var in variations2):
-                raise ValueError(f"Specified filename field '{filename_field2}' not found in Excel headers")
-            filename_field2 = next(var for var in variations2 if var in headers)
+        if filename_field1 and filename_field1 not in headers:
+            raise ValueError(f"Specified filename field '{filename_field1}' not found in Excel headers")
+        
+        if filename_field2 and filename_field2 not in headers:
+            raise ValueError(f"Specified filename field '{filename_field2}' not found in Excel headers")
         
         if not filename_field1 and not filename_field2:
             print("No filename fields specified - using timestamps for output files")
-        
-        # Create field mapping variations once - this will be used for all rows
-        field_variations_map = {}
-        for field in template_fields:
-            variations = normalize_field_name(field)
-            for var in variations:
-                field_variations_map[var] = field
         
         # Count total non-empty rows
         total_files = sum(1 for row in ws.iter_rows(min_row=2) if any(cell.value for cell in row))
