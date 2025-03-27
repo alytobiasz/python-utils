@@ -30,6 +30,15 @@ Usage:
     
        Example:
        python pdf_form_filler.py config.txt
+
+Important Notes:
+    - Troubleshoooting Tip: If having trouble with a particular field in the PDF form, try 
+      deleting the field in Acrobat and re-adding it, rather than modifying it (moving it or 
+      renaming it). For some reason, if you move or rename an existing form field after saving 
+      it, the change is not reflected in the resulting generated PDF.
+    - PDF form field names MUST NOT contain parentheses. The script will not work correctly
+      with field names like "Name (Legal)" due to how PDF form fields are processed.
+    - Excel headers must exactly match the PDF form field names for proper filling.
 """
 
 import sys
