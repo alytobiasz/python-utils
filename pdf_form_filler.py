@@ -22,8 +22,8 @@ Usage:
             excel_file = path/to/data.xlsx
             template = path/to/template.pdf
             output_directory = path/to/output
-            filename_field1 = First Name
-            filename_field2 = Last Name
+            filename_field1 = First Name  # Optional - uses timestamp if both fields omitted
+            filename_field2 = Last Name   # Optional - uses timestamp if both fields omitted
     
     2. Run the script:
        python pdf_form_filler.py <config_file>
@@ -42,6 +42,26 @@ import pymupdf
 import time
 import traceback
 import re
+
+def normalize_field_name(name):
+    """Normalize field name to handle variations in capitalization and spacing."""
+    if not name:
+        return []
+    
+    # Generate variations with different capitalizations and spacings
+    name = str(name).strip()
+    variations = [
+        name,
+        name.lower(),
+        name.upper(),
+        name.title(),
+        name.replace(" ", ""),
+        name.replace(" ", "_"),
+        name.replace("_", " ")
+    ]
+    
+    # Remove duplicates and empty strings
+    return list(set(var for var in variations if var))
 
 def read_excel_data(excel_path):
     """Read data from Excel file."""
@@ -274,31 +294,15 @@ def process_pdf(template_path, data_row, output_path, fields_to_flatten):
                         print(f"Warning: Could not remove temporary file {temp_path}: {e}")
 
 def sanitize_filename(filename):
-    """
-    Sanitize a filename by removing or replacing invalid characters.
-    
-    Args:
-        filename (str): The filename to sanitize
-        
-    Returns:
-        str: The sanitized filename
-    """
+    """Remove invalid characters from filename."""
     # Replace invalid characters with underscores
-    invalid_chars = r'[<>:"/\\|?*]'
-    filename = re.sub(invalid_chars, '_', filename)
-    
+    sanitized = re.sub(r'[\\/*?:"<>|]', "_", filename)
     # Remove leading/trailing spaces and dots
-    filename = filename.strip('. ')
-    
-    # Replace multiple spaces/underscores with single ones
-    filename = re.sub(r'[\s_]+', '_', filename)
-    
-    # Limit length (Windows has a 255 character limit)
-    max_length = 200  # Leave room for path and extension
-    if len(filename) > max_length:
-        filename = filename[:max_length]
-    
-    return filename
+    sanitized = sanitized.strip(". ")
+    # Default filename if empty
+    if not sanitized:
+        sanitized = "document"
+    return sanitized
 
 def read_config(config_path):
     """
@@ -358,9 +362,21 @@ def main():
         ws = wb.active
         headers = [cell.value for cell in ws[1]]
         
-        # Verify filename fields exist in headers
-        if filename_field1 not in headers or filename_field2 not in headers:
-            raise ValueError(f"Filename fields '{filename_field1}' and/or '{filename_field2}' not found in Excel headers")
+        # Verify filename fields exist in headers if specified
+        if filename_field1:
+            variations1 = normalize_field_name(filename_field1)
+            if not any(var in headers for var in variations1):
+                raise ValueError(f"Specified filename field '{filename_field1}' not found in Excel headers")
+            filename_field1 = next(var for var in variations1 if var in headers)
+            
+        if filename_field2:
+            variations2 = normalize_field_name(filename_field2)
+            if not any(var in headers for var in variations2):
+                raise ValueError(f"Specified filename field '{filename_field2}' not found in Excel headers")
+            filename_field2 = next(var for var in variations2 if var in headers)
+        
+        if not filename_field1 and not filename_field2:
+            print("No filename fields specified - using timestamps for output files")
         
         print(f"Found {len(headers)} fields in Excel headers")
         
@@ -382,8 +398,8 @@ def main():
             data = {headers[i]: str(val) if val is not None else '' for i, val in enumerate(row)}
             
             # Generate output filename from specified fields
-            field1_value = data.get(filename_field1, '').strip()
-            field2_value = data.get(filename_field2, '').strip()
+            field1_value = data.get(filename_field1, '').strip() if filename_field1 else ''
+            field2_value = data.get(filename_field2, '').strip() if filename_field2 else ''
             
             if field1_value or field2_value:
                 filename = f"{field1_value} {field2_value}".strip()
