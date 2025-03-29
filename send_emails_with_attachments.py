@@ -70,6 +70,8 @@ import time
 import csv
 import threading
 import concurrent.futures
+import socket
+import random
 from email import encoders
 from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
@@ -85,16 +87,78 @@ RESET = "\033[0m"    # Reset to default color
 # Thread-local storage for SMTP connections
 thread_local = threading.local()
 
-def get_smtp_connection(smtp_config):
-    """Get or create an SMTP connection for the current thread."""
-    if not hasattr(thread_local, "smtp"):
-        # Create new SMTP connection for this thread
-        smtp = smtplib.SMTP(smtp_config['smtp_server'], smtp_config['smtp_port'])
-        if smtp_config.get('use_tls', False):
-            smtp.starttls()
-        if smtp_config.get('use_auth', False):
-            smtp.login(smtp_config['smtp_username'], smtp_config['smtp_password'])
-        thread_local.smtp = smtp
+# Maximum number of connection retries
+MAX_RETRIES = 3
+
+# Connection refresh settings - refresh connection every X emails
+CONNECTION_REFRESH_COUNT = 20  # Refresh SMTP connection after this many emails
+
+def get_smtp_connection(smtp_config, force_new=False):
+    """Get or create an SMTP connection for the current thread.
+    
+    Args:
+        smtp_config (dict): SMTP configuration dictionary
+        force_new (bool): If True, create a new connection even if one exists
+        
+    Returns:
+        smtplib.SMTP: The SMTP connection
+    
+    Raises:
+        Exception: If connection fails after MAX_RETRIES attempts
+    """
+    # If force_new or no connection exists, create a new one
+    if force_new or not hasattr(thread_local, "smtp") or not hasattr(thread_local, "email_count"):
+        # Close existing connection if it exists
+        if hasattr(thread_local, "smtp"):
+            try:
+                thread_local.smtp.quit()
+            except:
+                pass  # Ignore errors when closing
+        
+        # Initialize or reset email counter for this thread
+        thread_local.email_count = 0
+        
+        # Retry logic for creating the connection
+        retries = 0
+        last_error = None
+        
+        while retries < MAX_RETRIES:
+            try:
+                # Create new SMTP connection for this thread
+                smtp = smtplib.SMTP(smtp_config['smtp_server'], smtp_config['smtp_port'], timeout=30)
+                
+                # Add some basic error handling
+                smtp.set_debuglevel(0)
+                
+                # TLS if needed
+                if smtp_config.get('use_tls', False):
+                    smtp.starttls()
+                
+                # Authentication if needed
+                if smtp_config.get('use_auth', False):
+                    smtp.login(smtp_config['smtp_username'], smtp_config['smtp_password'])
+                
+                thread_local.smtp = smtp
+                return smtp
+            
+            except (socket.error, smtplib.SMTPException) as e:
+                last_error = e
+                retries += 1
+                
+                # Add randomized exponential backoff
+                backoff_time = (2 ** retries) + random.random()
+                print(f"{YELLOW}SMTP connection attempt {retries} failed: {str(e)}. Retrying in {backoff_time:.2f} seconds...{RESET}")
+                time.sleep(backoff_time)
+        
+        # If we get here, we've exhausted our retries
+        raise Exception(f"Failed to establish SMTP connection after {MAX_RETRIES} attempts: {str(last_error)}")
+    
+    # Check if we need to refresh the connection
+    thread_local.email_count += 1
+    if thread_local.email_count >= CONNECTION_REFRESH_COUNT:
+        print(f"{YELLOW}Refreshing SMTP connection after {CONNECTION_REFRESH_COUNT} emails{RESET}")
+        return get_smtp_connection(smtp_config, force_new=True)
+    
     return thread_local.smtp
 
 def read_email_body(body_file):
@@ -224,7 +288,7 @@ def read_mapping_file(mapping_file, email_column, attachment_columns):
         raise ValueError(f"Error reading mapping file: {str(e)}")
 
 def send_email(smtp_config, to_email, subject, body, attachment_paths, test_mode=False, progress=None):
-    """Send an email with file attachments."""
+    """Send an email with file attachments with retry logic."""
     start_time = time.time()
     
     # Create message
@@ -258,7 +322,7 @@ def send_email(smtp_config, to_email, subject, body, attachment_paths, test_mode
             )
             msg.attach(part)
         except Exception as e:
-            print(f"{RED}WARNING: Error attaching file {attachment_path}: {e}{RESET}")
+            print(f"{YELLOW}WARNING: Error attaching file {attachment_path}: {e}{RESET}")
             # Continue with other attachments
     
     progress_info = f"[{progress[0]}/{progress[1]}] " if progress else ""
@@ -274,19 +338,37 @@ def send_email(smtp_config, to_email, subject, body, attachment_paths, test_mode
         print(f"Attachments: {attachment_str if attachment_str else 'None'}")
         return True
     
-    # Send email
-    try:
-        if not test_mode:
-            smtp = get_smtp_connection(smtp_config)
-            smtp.send_message(msg)
+    # Send email with retry logic
+    retries = 0
+    while retries < MAX_RETRIES:
+        try:
+            if not test_mode:
+                # Get a connection (might be new or existing)
+                smtp = get_smtp_connection(smtp_config)
+                smtp.send_message(msg)
+            
+            elapsed_time = time.time() - start_time
+            print(f"{GREEN}{progress_info}Email sent to {to_email} with {len(attachment_names)} attachment(s) - took {elapsed_time:.2f} seconds{RESET}")
+            return True
         
-        elapsed_time = time.time() - start_time
-        print(f"{progress_info}Email sent to {to_email} with {len(attachment_names)} attachment(s) - took {elapsed_time:.2f} seconds")
-        return True
-    except Exception as e:
-        elapsed_time = time.time() - start_time
-        print(f"{RED}{progress_info}Error sending email to {to_email} after {elapsed_time:.2f} seconds: {str(e)}{RESET}")
-        return False
+        except (smtplib.SMTPException, socket.error, ConnectionError, OSError) as e:
+            retries += 1
+            elapsed_time = time.time() - start_time
+            
+            # Determine if we should retry
+            if retries < MAX_RETRIES:
+                backoff_time = (2 ** retries) + random.random()
+                print(f"{YELLOW}{progress_info}Error sending email to {to_email} (attempt {retries}/{MAX_RETRIES}): {str(e)}. Retrying in {backoff_time:.2f} seconds...{RESET}")
+                time.sleep(backoff_time)
+                
+                # Force a new connection on retry
+                try:
+                    smtp = get_smtp_connection(smtp_config, force_new=True)
+                except Exception as conn_err:
+                    print(f"{RED}Failed to refresh connection: {str(conn_err)}{RESET}")
+            else:
+                print(f"{RED}{progress_info}Error sending email to {to_email} after {elapsed_time:.2f} seconds and {MAX_RETRIES} attempts: {str(e)}{RESET}")
+                return False
 
 def process_email(args):
     """Process a single email send operation."""
