@@ -272,7 +272,7 @@ def read_mapping_file(mapping_file, email_column, attachment_columns):
     try:
         # First, filter out comment lines and blank lines
         filtered_lines = []
-        with open(mapping_file, 'r', encoding='utf-8-sig') as f:
+        with open(mapping_file, 'r', encoding='utf-8') as f:
             for line in f:
                 line = line.strip()
                 # Skip blank lines and comment lines
@@ -287,7 +287,7 @@ def read_mapping_file(mapping_file, email_column, attachment_columns):
         # Now read the filtered CSV data
         reader = csv.DictReader(csv_data)
         
-        # Clean up fieldnames to remove any BOM characters
+        # Clean up fieldnames to remove any BOM characters resulting from Excel conversion to csv
         reader.fieldnames = [field.strip('\ufeff') for field in reader.fieldnames]
         fieldnames = reader.fieldnames
         
