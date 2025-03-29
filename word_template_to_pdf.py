@@ -10,8 +10,8 @@ This script combines docx_template_filler.py and docx_to_pdf.py to:
 
 Requirements:
     - All requirements from docx_template_filler.py
-    - All requirements from docx_to_pdf.py
-    - Microsoft Word must be installed (Windows or macOS)
+    - All requirements from docx_to_pdf.py or libreoffice_docx_to_pdf.py depending on engine choice
+    - Microsoft Word (Windows or macOS) or LibreOffice must be installed
 
 Usage:
     python word_template_to_pdf.py <config_file>
@@ -19,8 +19,9 @@ Usage:
 Example:
     python word_template_to_pdf.py config.txt
 
-The config file format is the same as docx_template_filler.py, with one additional option:
+The config file format is the same as docx_template_filler.py, with additional options:
     keep_word_file = false  # Optional - set to true to keep both .docx and .pdf
+    conversion_engine = word  # Optional - 'word' or 'libreoffice' (default: 'word')
 """
 
 import sys
@@ -31,17 +32,18 @@ from datetime import datetime
 
 # Import the functions from both scripts
 from docx_template_filler import read_config, fill_docx_templates
-from docx_to_pdf import create_pdfs
+from docx_to_pdf import create_pdfs as create_pdfs_word
+# Import LibreOffice version if available
+try:
+    from libreoffice_docx_to_pdf import create_pdfs as create_pdfs_libreoffice
+    libreoffice_available = True
+except ImportError:
+    libreoffice_available = False
 
 def main():
     """Main function to coordinate template filling and PDF conversion."""
     if len(sys.argv) != 2:
         print("Usage: python word_template_to_pdf.py <config_file>")
-        sys.exit(1)
-    
-    # Check if running on supported OS
-    if platform.system() not in ['Windows', 'Darwin']:
-        print("Error: This script only supports Windows and macOS")
         sys.exit(1)
     
     try:
@@ -51,6 +53,26 @@ def main():
         config = read_config(sys.argv[1])
         base_output_dir = config['output_directory']
         keep_word = config.get('keep_word_file', '').lower() == 'true'
+        
+        # Get conversion engine preference (default to 'word')
+        conversion_engine = config.get('conversion_engine', 'word').lower()
+        
+        # Validate conversion engine choice
+        if conversion_engine not in ['word', 'libreoffice']:
+            print(f"Warning: Invalid conversion_engine '{conversion_engine}'. Must be 'word' or 'libreoffice'. Defaulting to 'word'.")
+            conversion_engine = 'word'
+        
+        # Check if LibreOffice is requested but not available
+        if conversion_engine == 'libreoffice' and not libreoffice_available:
+            print("Warning: LibreOffice conversion requested but libreoffice_docx_to_pdf.py module not found.")
+            print("Falling back to Word conversion. Please ensure libreoffice_docx_to_pdf.py is in the same directory.")
+            conversion_engine = 'word'
+        
+        # Check if running on supported OS for Word conversion
+        if conversion_engine == 'word' and platform.system() not in ['Windows', 'Darwin']:
+            print("Error: Word conversion only supports Windows and macOS")
+            print("Consider using LibreOffice conversion for this platform.")
+            sys.exit(1)
         
         # Create timestamped directory if base directory exists and is not empty
         if os.path.exists(base_output_dir) and os.listdir(base_output_dir):
@@ -70,9 +92,12 @@ def main():
         print("\nStep 1: Generating Word documents...")
         docx_success, docx_total = fill_docx_templates(config)
         
-        # Step 2: Convert Word documents to PDF
-        print("\nStep 2: Converting to PDF...")
-        pdf_success, pdf_total = create_pdfs(output_dir, output_dir)
+        # Step 2: Convert Word documents to PDF using selected engine
+        print(f"\nStep 2: Converting to PDF using {conversion_engine.capitalize()}...")
+        if conversion_engine == 'libreoffice':
+            pdf_success, pdf_total = create_pdfs_libreoffice(output_dir, output_dir)
+        else:  # default to Word
+            pdf_success, pdf_total = create_pdfs_word(output_dir, output_dir)
         
         # Clean up Word files if not keeping them
         if not keep_word:
@@ -90,6 +115,7 @@ def main():
         print(f"Word documents generated: {docx_success}/{docx_total}")
         print(f"PDF files created: {pdf_success}/{pdf_total}")
         print(f"Output directory: {os.path.abspath(output_dir)}")
+        print(f"Conversion engine: {conversion_engine.capitalize()}")
         if keep_word:
             print(f"Word files directory: {os.path.abspath(output_dir)}")
         
