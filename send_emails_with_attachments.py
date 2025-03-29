@@ -261,57 +261,123 @@ def read_mapping_file(mapping_file, email_column, attachment_columns):
         attachment_columns (list): List of column names containing filenames to attach
     
     Returns:
-        list: List of (email, attachments) tuples for sending
+        tuple: (email_tasks, original_rows, fieldnames) where:
+            - email_tasks is a list of (email, attachments) tuples for sending
+            - original_rows is a list of the original CSV rows
+            - fieldnames is a list of the CSV column names
     """
     email_tasks = []
+    original_rows = []
+    
     try:
-        with open(mapping_file, 'r', encoding='utf-8-sig') as f:  # Changed to utf-8-sig to handle BOM
-            reader = csv.DictReader(f)
-            
-            # Clean up fieldnames to remove any BOM characters
-            reader.fieldnames = [field.strip('\ufeff') for field in reader.fieldnames]
-            
-            # Verify email column exists
-            if email_column not in reader.fieldnames:
-                raise ValueError(f"Email column '{email_column}' not found in mapping file. Available columns: {reader.fieldnames}")
-            
-            logging.info(f"Looking for email column '{email_column}' and attachment columns: {', '.join(attachment_columns)}")
-            
-            # Verify all attachment columns exist
-            missing_columns = [col for col in attachment_columns if col not in reader.fieldnames]
-            if missing_columns:
-                raise ValueError(f"Attachment column(s) not found in mapping file: {', '.join(missing_columns)}. Available columns: {reader.fieldnames}")
-            
-            # Read mappings - each row becomes one email task
-            row_count = 0
-            for row in reader:
-                row_count += 1
-                email = row[email_column]
-                
-                if not email or '@' not in email:
-                    logging.warning(f"Skipping invalid email address in row {row_count}: {email}")
+        # First, filter out comment lines and blank lines
+        filtered_lines = []
+        with open(mapping_file, 'r', encoding='utf-8-sig') as f:
+            for line in f:
+                line = line.strip()
+                # Skip blank lines and comment lines
+                if not line or line.startswith('#'):
                     continue
-                
-                email = str(email).strip()
-                
-                # Collect attachment files for this row
-                files_for_row = []
-                for attachment_column in attachment_columns:
-                    filename = row[attachment_column]
-                    if filename:
-                        filename = str(filename).strip()
-                        if filename:
-                            files_for_row.append(filename)
-                
-                # Add to email tasks even if no attachments were specified 
-                email_tasks.append((email, files_for_row))
-            
-            logging.info(f"\nFound CSV columns: {reader.fieldnames}")
-            logging.info(f"Found {len(email_tasks)} email tasks to process")
-            return email_tasks
+                filtered_lines.append(line)
         
+        # Use StringIO to create an in-memory file-like object
+        from io import StringIO
+        csv_data = StringIO('\n'.join(filtered_lines))
+        
+        # Now read the filtered CSV data
+        reader = csv.DictReader(csv_data)
+        
+        # Clean up fieldnames to remove any BOM characters
+        reader.fieldnames = [field.strip('\ufeff') for field in reader.fieldnames]
+        fieldnames = reader.fieldnames
+        
+        # Verify email column exists
+        if email_column not in reader.fieldnames:
+            raise ValueError(f"Email column '{email_column}' not found in mapping file. Available columns: {reader.fieldnames}")
+        
+        logging.info(f"Looking for email column '{email_column}' and attachment columns: {', '.join(attachment_columns)}")
+        
+        # Verify all attachment columns exist
+        missing_columns = [col for col in attachment_columns if col not in reader.fieldnames]
+        if missing_columns:
+            raise ValueError(f"Attachment column(s) not found in mapping file: {', '.join(missing_columns)}. Available columns: {reader.fieldnames}")
+        
+        # Read mappings - each row becomes one email task
+        row_count = 0
+        for row in reader:
+            row_count += 1
+            email = row[email_column]
+            original_rows.append(row)  # Store the original row
+            
+            if not email or '@' not in email:
+                logging.warning(f"Skipping invalid email address in row {row_count}: {email}")
+                continue
+            
+            email = str(email).strip()
+            
+            # Collect attachment files for this row
+            files_for_row = []
+            for attachment_column in attachment_columns:
+                filename = row[attachment_column]
+                if filename:
+                    filename = str(filename).strip()
+                    if filename:
+                        files_for_row.append(filename)
+            
+            # Add to email tasks even if no attachments were specified 
+            email_tasks.append((email, files_for_row))
+        
+        logging.info(f"Found CSV columns: {reader.fieldnames}")
+        logging.info(f"Found {len(email_tasks)} email tasks to process")
+        return email_tasks, original_rows, fieldnames
+    
     except Exception as e:
         raise ValueError(f"Error reading mapping file: {str(e)}")
+
+def write_failed_report(failed_tasks, original_fieldnames, output_file=None):
+    """Write a CSV report of failed email tasks.
+    
+    Args:
+        failed_tasks (list): List of rows that failed to process
+        original_fieldnames (list): Column names from the original CSV
+        output_file (str, optional): Output file path. If None, a timestamped filename is generated.
+        
+    Returns:
+        str: Path to the report file, or None if no failed tasks
+    """
+    # If no failed tasks, don't create a report
+    if not failed_tasks:
+        logging.info("No failed tasks to report")
+        return None
+    
+    # Create logs directory if it doesn't exist
+    os.makedirs('logs', exist_ok=True)
+    
+    # Generate filename with timestamp if not provided
+    if not output_file:
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        output_file = f"logs/failed_emails_{timestamp}.csv"
+    
+    try:
+        # Write the report
+        with open(output_file, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=original_fieldnames)
+            
+            # Add a comment at the top of the file explaining how to use it
+            f.write("# This file contains rows that failed to process.\n")
+            f.write("# To retry these emails, use this file as your mapping file:\n")
+            f.write(f"# python send_emails_with_attachments.py <config_file> (with mapping_file = {output_file} in your config)\n\n")
+            
+            writer.writeheader()
+            for row in failed_tasks:
+                writer.writerow(row)
+                
+        logging.info(f"Failed tasks report written to: {output_file}")
+        return output_file
+        
+    except Exception as e:
+        logging.error(f"Error writing failed tasks report: {str(e)}")
+        return None
 
 def send_email(smtp_config, to_email, subject, body, attachment_paths, test_mode=False, progress=None):
     """Send an email with file attachments with retry logic."""
@@ -355,7 +421,7 @@ def send_email(smtp_config, to_email, subject, body, attachment_paths, test_mode
     attachment_str = ", ".join(attachment_names)
     
     if test_mode:
-        logging.info(f"\n{progress_info}Would send email:")
+        logging.info(f"{progress_info}Would send email:")
         logging.info(f"From: {msg['From']}")
         logging.info(f"To: {to_email}")
         if 'bcc_recipients' in smtp_config and smtp_config['bcc_recipients']:
@@ -398,7 +464,7 @@ def send_email(smtp_config, to_email, subject, body, attachment_paths, test_mode
 
 def process_email(args):
     """Process a single email send operation."""
-    smtp_config, email, attachment_paths, config, current_count, total_emails = args
+    smtp_config, email, attachment_paths, config, current_count, total_emails, row_index = args
     email_start_time = time.time()
     success = send_email(
         smtp_config=smtp_config,
@@ -409,7 +475,7 @@ def process_email(args):
         test_mode=config['test_mode'],
         progress=(current_count, total_emails)
     )
-    return success, time.time() - email_start_time
+    return success, time.time() - email_start_time, row_index
 
 def main():
     if len(sys.argv) != 2:
@@ -437,7 +503,7 @@ def main():
         
         # Read mapping file
         logging.info("\nReading mapping file...")
-        email_tasks = read_mapping_file(
+        email_tasks, original_rows, fieldnames = read_mapping_file(
             config['mapping_file'],
             config['email_column'],
             config['attachment_columns']
@@ -455,6 +521,9 @@ def main():
         skipped_count = 0
         not_found_count = 0
         found_files = {}  # Track files that exist so we don't check multiple times
+        failed_rows = []  # Store rows that failed to process
+        skipped_indices = set()  # Keep track of skipped rows due to missing attachments
+        missing_attachments = []  # Track all missing attachment files
         
         logging.info(f"\nProcessing {total_emails} emails with {total_attachments} total attachments")
         logging.info(f"Using {max_threads} threads for parallel processing")
@@ -468,12 +537,48 @@ def main():
         if config['bcc_recipients']:
             logging.info(f"BCC recipients: {', '.join(config['bcc_recipients'])}")
         
+        logging.info("\nVerifying all attachment files exist...")
+        # First verify all attachment files exist
+        for index, (email, attachment_files) in enumerate(email_tasks):
+            current_count = index + 1
+            
+            if not attachment_files:
+                continue  # Skip checking if no attachments
+                
+            # Check which attachment files exist
+            invalid_files = []
+            
+            for attachment_file in attachment_files:
+                file_path = os.path.join(input_dir, attachment_file)
+                
+                # Check if we already know if this file exists
+                if attachment_file in found_files:
+                    if not found_files[attachment_file]:  # File is known to not exist
+                        invalid_files.append(attachment_file)
+                else:
+                    # Check if file exists and store result for future use
+                    if os.path.isfile(file_path):
+                        found_files[attachment_file] = True
+                    else:
+                        invalid_files.append(attachment_file)
+                        found_files[attachment_file] = False
+                        not_found_count += 1
+            
+            # If any attachment files were not found, log it and add to missing_attachments list
+            if invalid_files:
+                logging.error(f"[{current_count}/{total_emails}] Email to {email} has missing attachment file(s): {', '.join(invalid_files)}")
+                missing_attachments.append(f"Row {index+1} - Email to {email} has missing attachment file(s): {', '.join(invalid_files)}")
+        
+        # If any attachments are missing, abort the process
+        if missing_attachments:
+            raise ValueError(f"Aborting: Found {not_found_count} missing attachment file(s). Please fix missing attachments before running again.")
+            
         # Prepare email tasks for processing
         processing_tasks = []
         current_count = 0
         
         # Process each email task
-        for email, attachment_files in email_tasks:
+        for index, (email, attachment_files) in enumerate(email_tasks):
             current_count += 1
             
             # If no attachment files specified, send email without attachments
@@ -491,41 +596,14 @@ def main():
                 }
                 
                 # Add task with empty attachments list
-                processing_tasks.append((smtp_config, email, [], config, current_count, total_emails))
+                processing_tasks.append((smtp_config, email, [], config, current_count, total_emails, index))
                 continue
             
-            # Check which attachment files exist
+            # At this point, we know all attachments exist, so just collect valid file paths
             valid_file_paths = []
-            invalid_files = []
-            all_files_found = True
-            
             for attachment_file in attachment_files:
                 file_path = os.path.join(input_dir, attachment_file)
-                
-                # Check if we already know if this file exists
-                if attachment_file in found_files:
-                    if found_files[attachment_file]:  # File exists
-                        valid_file_paths.append(file_path)
-                    else:
-                        # File is known to not exist
-                        invalid_files.append(attachment_file)
-                        all_files_found = False
-                else:
-                    # Check if file exists and store result for future use
-                    if os.path.isfile(file_path):
-                        valid_file_paths.append(file_path)
-                        found_files[attachment_file] = True
-                    else:
-                        invalid_files.append(attachment_file)
-                        found_files[attachment_file] = False
-                        not_found_count += 1
-                        all_files_found = False
-            
-            # Skip if any attachment files were not found
-            if not all_files_found:
-                logging.warning(f"Email to {email} skipped: Missing attachment file(s): {', '.join(invalid_files)}")
-                skipped_count += 1
-                continue
+                valid_file_paths.append(file_path)
             
             # Create the SMTP config once per task
             smtp_config = {
@@ -540,19 +618,37 @@ def main():
             }
             
             # Add task for this email with its attachments
-            processing_tasks.append((smtp_config, email, valid_file_paths, config, current_count, total_emails))
+            processing_tasks.append((smtp_config, email, valid_file_paths, config, current_count, total_emails, index))
         
         # Process emails in parallel using thread pool
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_threads) as executor:
-            results = list(executor.map(process_email, processing_tasks))
+            # Use a dict to track which future corresponds to which row
+            future_to_index = {}
             
-            # Process results
-            for success, email_time in results:
-                if success:
-                    success_count += 1
-                    total_email_time += email_time
-                else:
+            # Submit all tasks
+            for task in processing_tasks:
+                future = executor.submit(process_email, task)
+                future_to_index[future] = task[6]  # Store the row index
+            
+            # Process results as they complete
+            for future in concurrent.futures.as_completed(future_to_index):
+                row_index = future_to_index[future]
+                
+                try:
+                    success, email_time, _ = future.result()
+                    if success:
+                        success_count += 1
+                        total_email_time += email_time
+                    else:
+                        skipped_count += 1
+                        failed_rows.append(original_rows[row_index])
+                except Exception as e:
+                    logging.error(f"Error processing email: {e}")
                     skipped_count += 1
+                    failed_rows.append(original_rows[row_index])
+        
+        # Write report of failed rows
+        failed_report = write_failed_report(failed_rows, fieldnames)
         
         # Print summary
         total_time = time.time() - start_time
@@ -561,18 +657,17 @@ def main():
         logging.info("\nSummary:")
         logging.info(f"Total time: {total_time:.2f} seconds")
         logging.info(f"Average time per email: {avg_email_time:.2f} seconds")
-        logging.info(f"Total emails processed: {total_emails}")
+        logging.info(f"Total rows processed: {total_emails}")
         logging.info(f"Total attachments: {total_attachments}")
         logging.info(f"Successfully sent: {success_count}")
         logging.info(f"Files not found: {not_found_count}")
-        logging.info(f"Emails skipped: {skipped_count}")
+        logging.info(f"Emails skipped/failed: {skipped_count}")
         logging.info(f"Log file: {log_file}")
+        if failed_report:
+            logging.info(f"Failed tasks report: {failed_report}")
         
     except Exception as e:
-        if 'logging' in sys.modules:
-            logging.error(f"\nError: {str(e)}")
-        else:
-            print(f"\nError: {str(e)}")
+        logging.error(f"\nError: {str(e)}")
         sys.exit(1)
     finally:
         # Clean up any remaining SMTP connections
