@@ -72,17 +72,13 @@ import threading
 import concurrent.futures
 import socket
 import random
+import logging
+from datetime import datetime
 from email import encoders
 from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
-
-# ANSI color codes for terminal output
-YELLOW = "\033[93m"  # Yellow for warnings
-RED = "\033[91m"     # Red for errors
-GREEN = "\033[92m"   # Green for success
-RESET = "\033[0m"    # Reset to default color
 
 # Thread-local storage for SMTP connections
 thread_local = threading.local()
@@ -92,6 +88,36 @@ MAX_RETRIES = 3
 
 # Connection refresh settings - refresh connection every X emails
 CONNECTION_REFRESH_COUNT = 20  # Refresh SMTP connection after this many emails
+
+# Set up logging
+def setup_logging():
+    """Set up logging to file and console."""
+    # Create logs directory if it doesn't exist
+    os.makedirs('logs', exist_ok=True)
+    
+    # Generate log filename with timestamp
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    log_file = f"logs/email_sending_{timestamp}.log"
+    
+    # Create logger
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
+    
+    # Create formatter
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    
+    # File handler
+    file_handler = logging.FileHandler(log_file)
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+    
+    # Console handler
+    console_handler = logging.StreamHandler()
+    console_handler.setFormatter(formatter)
+    logger.addHandler(console_handler)
+    
+    logging.info(f"Logging to console and file: {log_file}")
+    return log_file
 
 def get_smtp_connection(smtp_config, force_new=False):
     """Get or create an SMTP connection for the current thread.
@@ -147,7 +173,7 @@ def get_smtp_connection(smtp_config, force_new=False):
                 
                 # Add randomized exponential backoff
                 backoff_time = (2 ** retries) + random.random()
-                print(f"{YELLOW}SMTP connection attempt {retries} failed: {str(e)}. Retrying in {backoff_time:.2f} seconds...{RESET}")
+                logging.warning(f"SMTP connection attempt {retries} failed: {str(e)}. Retrying in {backoff_time:.2f} seconds...")
                 time.sleep(backoff_time)
         
         # If we get here, we've exhausted our retries
@@ -156,7 +182,7 @@ def get_smtp_connection(smtp_config, force_new=False):
     # Check if we need to refresh the connection
     thread_local.email_count += 1
     if thread_local.email_count >= CONNECTION_REFRESH_COUNT:
-        print(f"{YELLOW}Refreshing SMTP connection after {CONNECTION_REFRESH_COUNT} emails{RESET}")
+        logging.info(f"Refreshing SMTP connection after {CONNECTION_REFRESH_COUNT} emails")
         return get_smtp_connection(smtp_config, force_new=True)
     
     return thread_local.smtp
@@ -249,7 +275,7 @@ def read_mapping_file(mapping_file, email_column, attachment_columns):
             if email_column not in reader.fieldnames:
                 raise ValueError(f"Email column '{email_column}' not found in mapping file. Available columns: {reader.fieldnames}")
             
-            print(f"Looking for email column '{email_column}' and attachment columns: {', '.join(attachment_columns)}")
+            logging.info(f"Looking for email column '{email_column}' and attachment columns: {', '.join(attachment_columns)}")
             
             # Verify all attachment columns exist
             missing_columns = [col for col in attachment_columns if col not in reader.fieldnames]
@@ -263,7 +289,7 @@ def read_mapping_file(mapping_file, email_column, attachment_columns):
                 email = row[email_column]
                 
                 if not email or '@' not in email:
-                    print(f"{YELLOW}WARNING: Skipping invalid email address in row {row_count}: {email}{RESET}")
+                    logging.warning(f"Skipping invalid email address in row {row_count}: {email}")
                     continue
                 
                 email = str(email).strip()
@@ -280,8 +306,8 @@ def read_mapping_file(mapping_file, email_column, attachment_columns):
                 # Add to email tasks even if no attachments were specified 
                 email_tasks.append((email, files_for_row))
             
-            print(f"\nFound CSV columns: {reader.fieldnames}")
-            print(f"Found {len(email_tasks)} email tasks to process")
+            logging.info(f"\nFound CSV columns: {reader.fieldnames}")
+            logging.info(f"Found {len(email_tasks)} email tasks to process")
             return email_tasks
         
     except Exception as e:
@@ -322,20 +348,20 @@ def send_email(smtp_config, to_email, subject, body, attachment_paths, test_mode
             )
             msg.attach(part)
         except Exception as e:
-            print(f"{YELLOW}WARNING: Error attaching file {attachment_path}: {e}{RESET}")
+            logging.warning(f"Error attaching file {attachment_path}: {e}")
             # Continue with other attachments
     
     progress_info = f"[{progress[0]}/{progress[1]}] " if progress else ""
     attachment_str = ", ".join(attachment_names)
     
     if test_mode:
-        print(f"\n{progress_info}Would send email:")
-        print(f"From: {msg['From']}")
-        print(f"To: {to_email}")
+        logging.info(f"\n{progress_info}Would send email:")
+        logging.info(f"From: {msg['From']}")
+        logging.info(f"To: {to_email}")
         if 'bcc_recipients' in smtp_config and smtp_config['bcc_recipients']:
-            print(f"Bcc: {', '.join(smtp_config['bcc_recipients'])}")
-        print(f"Subject: {subject}")
-        print(f"Attachments: {attachment_str if attachment_str else 'None'}")
+            logging.info(f"Bcc: {', '.join(smtp_config['bcc_recipients'])}")
+        logging.info(f"Subject: {subject}")
+        logging.info(f"Attachments: {attachment_str if attachment_str else 'None'}")
         return True
     
     # Send email with retry logic
@@ -348,7 +374,7 @@ def send_email(smtp_config, to_email, subject, body, attachment_paths, test_mode
                 smtp.send_message(msg)
             
             elapsed_time = time.time() - start_time
-            print(f"{GREEN}{progress_info}Email sent to {to_email} with {len(attachment_names)} attachment(s) - took {elapsed_time:.2f} seconds{RESET}")
+            logging.info(f"{progress_info}Email sent to {to_email} with {len(attachment_names)} attachment(s) - took {elapsed_time:.2f} seconds")
             return True
         
         except (smtplib.SMTPException, socket.error, ConnectionError, OSError) as e:
@@ -358,16 +384,16 @@ def send_email(smtp_config, to_email, subject, body, attachment_paths, test_mode
             # Determine if we should retry
             if retries < MAX_RETRIES:
                 backoff_time = (2 ** retries) + random.random()
-                print(f"{YELLOW}{progress_info}Error sending email to {to_email} (attempt {retries}/{MAX_RETRIES}): {str(e)}. Retrying in {backoff_time:.2f} seconds...{RESET}")
+                logging.warning(f"{progress_info}Error sending email to {to_email} (attempt {retries}/{MAX_RETRIES}): {str(e)}. Retrying in {backoff_time:.2f} seconds...")
                 time.sleep(backoff_time)
                 
                 # Force a new connection on retry
                 try:
                     smtp = get_smtp_connection(smtp_config, force_new=True)
                 except Exception as conn_err:
-                    print(f"{RED}Failed to refresh connection: {str(conn_err)}{RESET}")
+                    logging.error(f"Failed to refresh connection: {str(conn_err)}")
             else:
-                print(f"{RED}{progress_info}Error sending email to {to_email} after {elapsed_time:.2f} seconds and {MAX_RETRIES} attempts: {str(e)}{RESET}")
+                logging.error(f"{progress_info}Error sending email to {to_email} after {elapsed_time:.2f} seconds and {MAX_RETRIES} attempts: {str(e)}")
                 return False
 
 def process_email(args):
@@ -387,15 +413,19 @@ def process_email(args):
 
 def main():
     if len(sys.argv) != 2:
-        print(f"{YELLOW}Usage: python send_emails_with_attachments.py <config_file>{RESET}")
+        print("Usage: python send_emails_with_attachments.py <config_file>")
         sys.exit(1)
     
     try:
+        # Read configuration first (before setting up logging)
+        config = read_config(sys.argv[1])
+        
+        # Set up logging
+        log_file = setup_logging()
+        logging.info(f"Starting email sending process with config file: {sys.argv[1]}")
+        
         start_time = time.time()
         total_email_time = 0
-        
-        # Read configuration
-        config = read_config(sys.argv[1])
         input_dir = config['input_directory']
         
         # Get number of threads from config or use default
@@ -406,7 +436,7 @@ def main():
             raise ValueError(f"Input directory does not exist: {input_dir}")
         
         # Read mapping file
-        print("\nReading mapping file...")
+        logging.info("\nReading mapping file...")
         email_tasks = read_mapping_file(
             config['mapping_file'],
             config['email_column'],
@@ -426,17 +456,17 @@ def main():
         not_found_count = 0
         found_files = {}  # Track files that exist so we don't check multiple times
         
-        print(f"\nProcessing {total_emails} emails with {total_attachments} total attachments")
-        print(f"Using {max_threads} threads for parallel processing")
-        print(f"SMTP Server: {config['smtp_server']}:{config['smtp_port']}")
-        print(f"From: {config.get('smtp_username') if config.get('use_auth') else config['from_email']}")
-        print(f"TLS: {'Enabled' if config.get('use_tls') else 'Disabled'}")
-        print(f"Authentication: {'Enabled' if config.get('use_auth') else 'Disabled'}")
-        print(f"Attachment columns: {', '.join(config['attachment_columns'])}")
+        logging.info(f"\nProcessing {total_emails} emails with {total_attachments} total attachments")
+        logging.info(f"Using {max_threads} threads for parallel processing")
+        logging.info(f"SMTP Server: {config['smtp_server']}:{config['smtp_port']}")
+        logging.info(f"From: {config.get('smtp_username') if config.get('use_auth') else config['from_email']}")
+        logging.info(f"TLS: {'Enabled' if config.get('use_tls') else 'Disabled'}")
+        logging.info(f"Authentication: {'Enabled' if config.get('use_auth') else 'Disabled'}")
+        logging.info(f"Attachment columns: {', '.join(config['attachment_columns'])}")
         if config['test_mode']:
-            print("(TEST MODE - Emails will not be sent)")
+            logging.info("(TEST MODE - Emails will not be sent)")
         if config['bcc_recipients']:
-            print(f"BCC recipients: {', '.join(config['bcc_recipients'])}")
+            logging.info(f"BCC recipients: {', '.join(config['bcc_recipients'])}")
         
         # Prepare email tasks for processing
         processing_tasks = []
@@ -493,7 +523,7 @@ def main():
             
             # Skip if any attachment files were not found
             if not all_files_found:
-                print(f"{YELLOW}WARNING: Email to {email} skipped: Missing attachment file(s): {', '.join(invalid_files)}{RESET}")
+                logging.warning(f"Email to {email} skipped: Missing attachment file(s): {', '.join(invalid_files)}")
                 skipped_count += 1
                 continue
             
@@ -528,17 +558,21 @@ def main():
         total_time = time.time() - start_time
         avg_email_time = total_email_time / success_count if success_count > 0 else 0
         
-        print("\nSummary:")
-        print(f"Total time: {total_time:.2f} seconds")
-        print(f"Average time per email: {avg_email_time:.2f} seconds")
-        print(f"Total emails processed: {total_emails}")
-        print(f"Total attachments: {total_attachments}")
-        print(f"Successfully sent: {success_count}")
-        print(f"Files not found: {not_found_count}")
-        print(f"Emails skipped: {skipped_count}")
+        logging.info("\nSummary:")
+        logging.info(f"Total time: {total_time:.2f} seconds")
+        logging.info(f"Average time per email: {avg_email_time:.2f} seconds")
+        logging.info(f"Total emails processed: {total_emails}")
+        logging.info(f"Total attachments: {total_attachments}")
+        logging.info(f"Successfully sent: {success_count}")
+        logging.info(f"Files not found: {not_found_count}")
+        logging.info(f"Emails skipped: {skipped_count}")
+        logging.info(f"Log file: {log_file}")
         
     except Exception as e:
-        print(f"\nError: {str(e)}")
+        if 'logging' in sys.modules:
+            logging.error(f"\nError: {str(e)}")
+        else:
+            print(f"\nError: {str(e)}")
         sys.exit(1)
     finally:
         # Clean up any remaining SMTP connections
