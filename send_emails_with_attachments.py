@@ -73,6 +73,7 @@ import concurrent.futures
 import socket
 import random
 import logging
+import signal
 from datetime import datetime
 from email import encoders
 from email.mime.base import MIMEBase
@@ -88,6 +89,26 @@ MAX_RETRIES = 3
 
 # Connection refresh settings - refresh connection every X emails
 CONNECTION_REFRESH_COUNT = 20  # Refresh SMTP connection after this many emails
+
+# Global flag to track if script should exit
+should_exit = False
+
+# Set up signal handler for graceful shutdown
+def signal_handler(sig, frame):
+    """Handle keyboard interrupt and other signals to gracefully shut down."""
+    global should_exit
+    logging.info("\nKeyboard interrupt detected. Shutting down gracefully...")
+    logging.info("Please wait for current tasks to finish (this may take a moment)...")
+    
+    # Set flag for threads to check
+    should_exit = True
+    
+    # Don't exit immediately, let cleanup happen in main thread
+    # The thread pool will be shut down in main()
+
+# Register signal handlers
+signal.signal(signal.SIGINT, signal_handler)  # Handles Ctrl+C
+signal.signal(signal.SIGTERM, signal_handler)  # Handles termination signal
 
 # Set up logging
 def setup_logging():
@@ -381,7 +402,13 @@ def write_failed_report(failed_tasks, original_fieldnames, output_file=None):
 
 def send_email(smtp_config, to_email, subject, body, attachment_paths, test_mode=False, progress=None):
     """Send an email with file attachments with retry logic."""
+    global should_exit
     start_time = time.time()
+    
+    # Check if we should exit early
+    if should_exit:
+        logging.info(f"{progress[0] if progress else '?'}/{progress[1] if progress else '?'} Cancelling email to {to_email} due to user interrupt")
+        return False
     
     # Create message
     msg = MIMEMultipart()
@@ -401,6 +428,11 @@ def send_email(smtp_config, to_email, subject, body, attachment_paths, test_mode
     attachment_names = []
     attachment_errors = []
     for attachment_path in attachment_paths:
+        # Check if we should exit early
+        if should_exit:
+            logging.info(f"{progress[0] if progress else '?'}/{progress[1] if progress else '?'} Cancelling email to {to_email} due to user interrupt")
+            return False
+            
         try:
             with open(attachment_path, 'rb') as f:
                 part = MIMEBase('application', 'octet-stream')
@@ -423,6 +455,11 @@ def send_email(smtp_config, to_email, subject, body, attachment_paths, test_mode
     attachment_str = ", ".join(attachment_names)
     
     if test_mode:
+        # Check if we should exit early
+        if should_exit:
+            logging.info(f"{progress_info}Cancelling email to {to_email} due to user interrupt")
+            return False
+            
         # Collect all info in a single log message for test mode
         test_info = []
         test_info.append(f"{progress_info}Would send email to {to_email}")
@@ -443,6 +480,11 @@ def send_email(smtp_config, to_email, subject, body, attachment_paths, test_mode
     # Send email with retry logic
     retries = 0
     while retries < MAX_RETRIES:
+        # Check if we should exit early
+        if should_exit:
+            logging.info(f"{progress_info}Cancelling email to {to_email} due to user interrupt")
+            return False
+            
         try:
             if not test_mode:
                 # Get a connection (might be new or existing)
@@ -469,6 +511,11 @@ def send_email(smtp_config, to_email, subject, body, attachment_paths, test_mode
             retries += 1
             elapsed_time = time.time() - start_time
             
+            # Check if we should exit early
+            if should_exit:
+                logging.info(f"{progress_info}Cancelling email to {to_email} due to user interrupt")
+                return False
+                
             # Determine if we should retry
             if retries < MAX_RETRIES:
                 backoff_time = (2 ** retries) + random.random()
@@ -486,6 +533,12 @@ def send_email(smtp_config, to_email, subject, body, attachment_paths, test_mode
 
 def process_email(args):
     """Process a single email send operation."""
+    global should_exit
+    
+    # Check if we should exit early
+    if should_exit:
+        return False, 0, args[6]  # Return failure, zero time, and row index
+        
     smtp_config, email, attachment_paths, config, current_count, total_emails, row_index = args
     email_start_time = time.time()
     success = send_email(
@@ -500,9 +553,14 @@ def process_email(args):
     return success, time.time() - email_start_time, row_index
 
 def main():
+    global should_exit
+    
     if len(sys.argv) != 2:
         print("Usage: python send_emails_with_attachments.py <config_file>")
         sys.exit(1)
+    
+    # Set up a main thread exception handler to catch keyboard interrupts
+    executor = None
     
     try:
         # Read configuration first (before setting up logging)
@@ -562,6 +620,11 @@ def main():
         logging.info("\nVerifying all attachment files exist...")
         # First verify all attachment files exist
         for index, (email, attachment_files) in enumerate(email_tasks):
+            # Check for exit signal
+            if should_exit:
+                logging.info("Verification interrupted by user. Exiting...")
+                return
+                
             current_count = index + 1
             
             if not attachment_files:
@@ -594,6 +657,11 @@ def main():
         # If any attachments are missing, abort the process
         if missing_attachments:
             raise ValueError(f"Aborting: Found {not_found_count} missing attachment file(s). Please fix missing attachments before running again.")
+        
+        # Check if we should exit
+        if should_exit:
+            logging.info("Process interrupted by user before sending emails. Exiting...")
+            return
             
         # Prepare email tasks for processing
         processing_tasks = []
@@ -644,50 +712,110 @@ def main():
         
         # Process emails in parallel using thread pool
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_threads) as executor:
+            # Store executor in global variable so it can be shut down by signal handler
+            active_executor = executor
+            
             # Use a dict to track which future corresponds to which row
             future_to_index = {}
+            futures = []
             
             # Submit all tasks
             for task in processing_tasks:
+                # Check if we've been interrupted
+                if should_exit:
+                    break
+                    
                 future = executor.submit(process_email, task)
                 future_to_index[future] = task[6]  # Store the row index
+                futures.append(future)
             
             # Process results as they complete
-            for future in concurrent.futures.as_completed(future_to_index):
-                row_index = future_to_index[future]
-                
-                try:
-                    success, email_time, _ = future.result()
-                    if success:
-                        success_count += 1
-                        total_email_time += email_time
+            try:
+                for future in concurrent.futures.as_completed(futures):
+                    # This will raise any exceptions from the task
+                    if should_exit:
+                        # Don't wait for all tasks, just process the ones that have completed
+                        if future.done():
+                            row_index = future_to_index[future]
+                            try:
+                                success, email_time, _ = future.result()
+                                if success:
+                                    success_count += 1
+                                    total_email_time += email_time
+                                else:
+                                    skipped_count += 1
+                                    failed_rows.append(original_rows[row_index])
+                            except Exception as e:
+                                logging.error(f"Error processing email: {e}")
+                                skipped_count += 1
+                                failed_rows.append(original_rows[row_index])
                     else:
-                        skipped_count += 1
-                        failed_rows.append(original_rows[row_index])
-                except Exception as e:
-                    logging.error(f"Error processing email: {e}")
-                    skipped_count += 1
-                    failed_rows.append(original_rows[row_index])
+                        row_index = future_to_index[future]
+                        try:
+                            success, email_time, _ = future.result()
+                            if success:
+                                success_count += 1
+                                total_email_time += email_time
+                            else:
+                                skipped_count += 1
+                                failed_rows.append(original_rows[row_index])
+                        except Exception as e:
+                            logging.error(f"Error processing email: {e}")
+                            skipped_count += 1
+                            failed_rows.append(original_rows[row_index])
+            except KeyboardInterrupt:
+                # This is a backup in case the signal handler doesn't catch it
+                logging.info("\nKeyboard interrupt detected during email processing.")
+                should_exit = True
+            
+            # If interrupted, cancel any pending futures
+            if should_exit:
+                logging.info("Cancelling any pending email tasks...")
+                cancelled_count = 0
+                for future in futures:
+                    if not future.done():
+                        future.cancel()
+                        cancelled_count += 1
+                
+                if cancelled_count > 0:
+                    logging.info(f"Cancelled {cancelled_count} pending email tasks")
+        
+        # Check if we were interrupted
+        if should_exit:
+            logging.info("\nEmail sending process was interrupted by user.")
         
         # Write report of failed rows
-        failed_report = write_failed_report(failed_rows, fieldnames)
+        if failed_rows:
+            failed_report = write_failed_report(failed_rows, fieldnames)
+        else:
+            failed_report = None
         
         # Print summary
         total_time = time.time() - start_time
         avg_email_time = total_email_time / success_count if success_count > 0 else 0
         
+        # Calculate correct number of unprocessed emails
+        processed_emails = success_count + skipped_count
+        unprocessed_emails = total_emails - processed_emails
+        
         logging.info("\nSummary:")
         logging.info(f"Total time: {total_time:.2f} seconds")
         logging.info(f"Average time per email: {avg_email_time:.2f} seconds")
-        logging.info(f"Total rows processed: {total_emails}")
+        logging.info(f"Total rows: {total_emails}")
         logging.info(f"Total attachments: {total_attachments}")
         logging.info(f"Successfully sent: {success_count}")
         logging.info(f"Files not found: {not_found_count}")
         logging.info(f"Emails skipped/failed: {skipped_count}")
+        if should_exit:
+            logging.info(f"Process interrupted: {unprocessed_emails} emails not processed")
         logging.info(f"Log file: {log_file}")
         if failed_report:
             logging.info(f"Failed tasks report: {failed_report}")
         
+    except KeyboardInterrupt:
+        # This is a backup in case the signal handler doesn't catch it
+        logging.error("\nScript interrupted with keyboard interrupt (Ctrl+C).")
+        should_exit = True
     except Exception as e:
         logging.error(f"\nError: {str(e)}")
         sys.exit(1)
@@ -698,6 +826,15 @@ def main():
                 thread_local.smtp.quit()
             except:
                 pass
+        
+        # Normal exit if interrupted, error code otherwise
+        if should_exit:
+            logging.info("Script terminated due to user interrupt.")
+            sys.exit(0)
+        elif 'success_count' in locals() and 'skipped_count' in locals() and 'total_emails' in locals():
+            if success_count + skipped_count < total_emails:
+                logging.error("Script terminated abnormally, not all emails were processed.")
+                sys.exit(1)
 
 if __name__ == '__main__':
     main() 
