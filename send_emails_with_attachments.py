@@ -399,6 +399,7 @@ def send_email(smtp_config, to_email, subject, body, attachment_paths, test_mode
     
     # Add attachments
     attachment_names = []
+    attachment_errors = []
     for attachment_path in attachment_paths:
         try:
             with open(attachment_path, 'rb') as f:
@@ -414,20 +415,29 @@ def send_email(smtp_config, to_email, subject, body, attachment_paths, test_mode
             )
             msg.attach(part)
         except Exception as e:
-            logging.warning(f"Error attaching file {attachment_path}: {e}")
+            error_msg = f"Error attaching file {os.path.basename(attachment_path)}: {e}"
+            attachment_errors.append(error_msg)
             # Continue with other attachments
     
     progress_info = f"[{progress[0]}/{progress[1]}] " if progress else ""
     attachment_str = ", ".join(attachment_names)
     
     if test_mode:
-        logging.info(f"{progress_info}Would send email:")
-        logging.info(f"From: {msg['From']}")
-        logging.info(f"To: {to_email}")
+        # Collect all info in a single log message for test mode
+        test_info = []
+        test_info.append(f"{progress_info}Would send email to {to_email}")
+        test_info.append(f"From: {msg['From']}")
         if 'bcc_recipients' in smtp_config and smtp_config['bcc_recipients']:
-            logging.info(f"Bcc: {', '.join(smtp_config['bcc_recipients'])}")
-        logging.info(f"Subject: {subject}")
-        logging.info(f"Attachments: {attachment_str if attachment_str else 'None'}")
+            test_info.append(f"Bcc: {', '.join(smtp_config['bcc_recipients'])}")
+        test_info.append(f"Subject: {subject}")
+        test_info.append(f"Attachments: {attachment_str if attachment_str else 'None'}")
+        
+        # If there were attachment errors, add those
+        if attachment_errors:
+            test_info.append(f"Attachment Errors: {'; '.join(attachment_errors)}")
+        
+        # Log everything in a single line
+        logging.info(" | ".join(test_info))
         return True
     
     # Send email with retry logic
@@ -440,7 +450,19 @@ def send_email(smtp_config, to_email, subject, body, attachment_paths, test_mode
                 smtp.send_message(msg)
             
             elapsed_time = time.time() - start_time
-            logging.info(f"{progress_info}Email sent to {to_email} with {len(attachment_names)} attachment(s) - took {elapsed_time:.2f} seconds")
+            
+            # Create a comprehensive success log message
+            log_parts = []
+            log_parts.append(f"{progress_info}Email sent to {to_email}")
+            log_parts.append(f"Attachments: {len(attachment_names)}")
+            log_parts.append(f"Time: {elapsed_time:.2f}s")
+            
+            # If there were attachment errors, add those
+            if attachment_errors:
+                log_parts.append(f"Attachment Errors: {'; '.join(attachment_errors)}")
+            
+            # Log everything in a single line
+            logging.info(" | ".join(log_parts))
             return True
         
         except (smtplib.SMTPException, socket.error, ConnectionError, OSError) as e:
@@ -450,16 +472,16 @@ def send_email(smtp_config, to_email, subject, body, attachment_paths, test_mode
             # Determine if we should retry
             if retries < MAX_RETRIES:
                 backoff_time = (2 ** retries) + random.random()
-                logging.warning(f"{progress_info}Error sending email to {to_email} (attempt {retries}/{MAX_RETRIES}): {str(e)}. Retrying in {backoff_time:.2f} seconds...")
+                logging.warning(f"{progress_info}Error sending to {to_email} (attempt {retries}/{MAX_RETRIES}) | Error: {str(e)} | Retrying in {backoff_time:.2f}s")
                 time.sleep(backoff_time)
                 
                 # Force a new connection on retry
                 try:
                     smtp = get_smtp_connection(smtp_config, force_new=True)
                 except Exception as conn_err:
-                    logging.error(f"Failed to refresh connection: {str(conn_err)}")
+                    logging.error(f"{progress_info}Failed to refresh connection for {to_email} | Error: {str(conn_err)}")
             else:
-                logging.error(f"{progress_info}Error sending email to {to_email} after {elapsed_time:.2f} seconds and {MAX_RETRIES} attempts: {str(e)}")
+                logging.error(f"{progress_info}Failed to send to {to_email} | Time: {elapsed_time:.2f}s | Error: {str(e)} | Max retries exceeded")
                 return False
 
 def process_email(args):
@@ -566,7 +588,7 @@ def main():
             
             # If any attachment files were not found, log it and add to missing_attachments list
             if invalid_files:
-                logging.error(f"[{current_count}/{total_emails}] Email to {email} has missing attachment file(s): {', '.join(invalid_files)}")
+                logging.error(f"[{current_count}/{total_emails}] Email to {email} | Row {index+1} | Missing files: {', '.join(invalid_files)}")
                 missing_attachments.append(f"Row {index+1} - Email to {email} has missing attachment file(s): {', '.join(invalid_files)}")
         
         # If any attachments are missing, abort the process
