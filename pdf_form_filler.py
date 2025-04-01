@@ -389,8 +389,16 @@ def process_row_task(args):
     
     try:
         # Generate output filename from specified fields
-        field1_value = data.get(filename_field1, '').strip() if filename_field1 else ''
-        field2_value = data.get(filename_field2, '').strip() if filename_field2 else ''
+        # Safely handle non-string values by converting to string first
+        field1_value = ''
+        if filename_field1:
+            value = data.get(filename_field1, '')
+            field1_value = str(value).strip() if value is not None else ''
+            
+        field2_value = ''
+        if filename_field2:
+            value = data.get(filename_field2, '')
+            field2_value = str(value).strip() if value is not None else ''
         
         if field1_value or field2_value:
             filename = f"{field1_value} {field2_value}".strip()
