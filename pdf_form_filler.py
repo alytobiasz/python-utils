@@ -1,6 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
 """
 PDF Form Filler
 
@@ -24,6 +21,7 @@ Usage:
             output_directory = path/to/output
             filename_field1 = First Name  # Optional - uses timestamp if both fields omitted
             filename_field2 = Last Name   # Optional - uses timestamp if both fields omitted
+            max_threads = 4               # Optional - number of concurrent processing threads (default: 4)
     
     2. Run the script:
        python pdf_form_filler.py <config_file>
@@ -39,6 +37,7 @@ Important Notes:
     - PDF form field names MUST NOT contain parentheses. The script will not work correctly
       with field names like "Name (Legal)" due to how PDF form fields are processed.
     - Excel headers must exactly match the PDF form field names for proper filling.
+    - The multi-threading feature significantly improves processing speed for large batches.
 """
 
 import sys
@@ -51,6 +50,31 @@ import pymupdf
 import time
 import traceback
 import re
+import concurrent.futures
+import threading
+import signal
+
+# Global flag to track if script should exit (for handling keyboard interrupts)
+should_exit = False
+
+# Thread-local storage for resource management
+thread_local = threading.local()
+
+# Set up signal handler for graceful shutdown
+def signal_handler(sig, frame):
+    """Handle keyboard interrupt and other signals to gracefully shut down."""
+    global should_exit
+    print("\nKeyboard interrupt detected. Shutting down gracefully...")
+    print("Please wait for current tasks to finish (this may take a moment)...")
+    
+    # Set flag for threads to check
+    should_exit = True
+    
+    # Don't exit immediately, let cleanup happen in main thread
+
+# Register signal handlers
+signal.signal(signal.SIGINT, signal_handler)  # Handles Ctrl+C
+signal.signal(signal.SIGTERM, signal_handler)  # Handles termination signal
 
 def normalize_field_name(name):
     """Normalize field name to handle variations in capitalization and spacing."""
@@ -96,6 +120,9 @@ def read_excel_data(excel_path):
 
 def fill_pdf_form(template_path, data_row, temp_output_path):
     """Fill PDF form using pdfrw."""
+    if should_exit:
+        return False
+        
     try:
         # Read the PDF template
         template = PdfReader(template_path)
@@ -146,6 +173,9 @@ def fill_pdf_form(template_path, data_row, temp_output_path):
 
 def flatten_fields(input_path, output_path, fields_to_flatten):
     """Flatten specified fields using PyMuPDF."""
+    if should_exit:
+        return False
+        
     pymupdf.TOOLS.mupdf_display_errors(False)
     doc = None
     success = False
@@ -155,11 +185,17 @@ def flatten_fields(input_path, output_path, fields_to_flatten):
         
         # Process each page
         for page_num, page in enumerate(doc):
+            if should_exit:
+                return False
+                
             try:
                 # Get form fields (widgets) on the page
                 fields = list(page.widgets())
                 
                 for field in fields:
+                    if should_exit:
+                        return False
+                        
                     try:
                         # Get field name safely
                         field_name = getattr(field, 'field_name', None)
@@ -213,8 +249,6 @@ def flatten_fields(input_path, output_path, fields_to_flatten):
                                         
                                 except Exception as e:
                                     print(f"Error processing field '{field_name}': {e}")
-                                    import traceback
-                                    print(traceback.format_exc())
                                     continue
                             else:
                                 # Field is empty, just remove the widget
@@ -225,14 +259,10 @@ def flatten_fields(input_path, output_path, fields_to_flatten):
                                     
                     except Exception as field_error:
                         print(f"Error processing field: {field_error}")
-                        import traceback
-                        print(traceback.format_exc())
                         continue
                         
             except Exception as page_error:
                 print(f"Error processing page {page_num + 1}: {page_error}")
-                import traceback
-                print(traceback.format_exc())
                 continue
         
         # Save the modified PDF
@@ -247,9 +277,6 @@ def flatten_fields(input_path, output_path, fields_to_flatten):
             
     except Exception as e:
         print(f"Error flattening PDF: {e}")
-        import traceback
-        print("Traceback:")
-        print(traceback.format_exc())
         return False
     finally:
         if doc:
@@ -263,6 +290,9 @@ def flatten_fields(input_path, output_path, fields_to_flatten):
 
 def process_pdf(template_path, data_row, output_path, fields_to_flatten):
     """Process a single PDF form - fill and flatten."""
+    if should_exit:
+        return False
+        
     temp_path = output_path + '.temp.pdf'
     try:
         # Step 1: Fill the form using pdfrw
@@ -346,8 +376,64 @@ def read_config(config_path):
     
     return config
 
+def process_row_task(args):
+    """Process a single row from the Excel file (for threading)."""
+    global should_exit
+    if should_exit:
+        return None
+        
+    row_idx, template_path, data, output_dir, headers, filename_field1, filename_field2, total_files = args
+    
+    start_time = time.time()
+    idx = row_idx + 1  # Human-readable index (1-based)
+    
+    try:
+        # Generate output filename from specified fields
+        field1_value = data.get(filename_field1, '').strip() if filename_field1 else ''
+        field2_value = data.get(filename_field2, '').strip() if filename_field2 else ''
+        
+        if field1_value or field2_value:
+            filename = f"{field1_value} {field2_value}".strip()
+        else:
+            # Fallback to timestamp if both fields are empty
+            filename = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{idx}"
+        
+        # Sanitize filename
+        filename = sanitize_filename(filename)
+        
+        # Add .pdf extension and handle duplicates
+        output_path = os.path.join(output_dir, f"{filename}.pdf")
+        counter = 1
+        while os.path.exists(output_path):
+            output_path = os.path.join(output_dir, f"{filename}_{counter}.pdf")
+            counter += 1
+        
+        success = process_pdf(template_path, data, output_path, headers)
+        elapsed_time = time.time() - start_time
+        
+        # Prepare result with progress info included
+        result = {
+            'success': success,
+            'output_path': output_path,
+            'index': idx,
+            'total': total_files,
+            'elapsed_time': elapsed_time
+        }
+        
+        return result
+    except Exception as e:
+        print(f"Error processing row {idx}: {str(e)}")
+        return {
+            'success': False,
+            'index': idx,
+            'total': total_files,
+            'error': str(e)
+        }
+
 def main():
     """Main function to process PDF forms."""
+    global should_exit
+    
     if len(sys.argv) != 2:
         print("Usage: python pdf_form_filler.py <config_file>")
         sys.exit(1)
@@ -362,6 +448,16 @@ def main():
         output_directory = config['output_directory']
         filename_field1 = config.get('filename_field1', '')
         filename_field2 = config.get('filename_field2', '')
+        
+        # Get threads configuration
+        try:
+            max_threads = int(config.get('max_threads', '4'))
+            if max_threads < 1:
+                max_threads = 1
+            print(f"Using {max_threads} processing threads")
+        except ValueError:
+            max_threads = 4
+            print(f"Invalid max_threads value, using default: {max_threads}")
         
         # Create output directory if it doesn't exist
         os.makedirs(output_directory, exist_ok=True)
@@ -389,64 +485,105 @@ def main():
         
         print(f"Found {len(headers)} fields in Excel headers")
         
-        # Count total non-empty rows
-        total_files = sum(1 for row in ws.iter_rows(min_row=2) if any(cell.value for cell in row))
-        processed_count = 0
-        success_count = 0
-        
-        # Process each row
-        for row_cells in ws.iter_rows(min_row=2):
-            row = [cell.value for cell in row_cells]
-            if not any(row):  # Skip empty rows
+        # Collect all rows to process (non-empty rows)
+        rows_to_process = []
+        for idx, row_cells in enumerate(ws.iter_rows(min_row=2)):
+            if not any(cell.value for cell in row_cells):  # Skip empty rows
                 continue
-            
-            processed_count += 1
-            start_time = time.time()
-            
+                
             # Create data dictionary
-            data = {headers[i]: str(val) if val is not None else '' for i, val in enumerate(row)}
-            
-            # Generate output filename from specified fields
-            field1_value = data.get(filename_field1, '').strip() if filename_field1 else ''
-            field2_value = data.get(filename_field2, '').strip() if filename_field2 else ''
-            
-            if field1_value or field2_value:
-                filename = f"{field1_value} {field2_value}".strip()
-            else:
-                # Fallback to timestamp if both fields are empty
-                filename = datetime.now().strftime("%Y%m%d_%H%M%S")
-            
-            # Sanitize filename
-            filename = sanitize_filename(filename)
-            
-            # Add .pdf extension and handle duplicates
-            output_path = os.path.join(output_directory, f"{filename}.pdf")
-            counter = 1
-            while os.path.exists(output_path):
-                output_path = os.path.join(output_directory, f"{filename}_{counter}.pdf")
-                counter += 1
-            
-            success = process_pdf(pdf_template, data, output_path, headers)
-            elapsed_time = time.time() - start_time
-            
-            if success:
-                success_count += 1
-                print(f"Successfully processed {processed_count}/{total_files} files: {os.path.basename(output_path)} in {elapsed_time:.1f} seconds")
-            else:
-                print(f"Failed to process PDF for row: {row}")
+            data = {headers[i]: cell.value for i, cell in enumerate(row_cells) if i < len(headers)}
+            rows_to_process.append((idx, data))
         
-        # Calculate total processing time and print summary
+        total_files = len(rows_to_process)
+        print(f"Found {total_files} non-empty rows to process")
+        
+        # Process rows in parallel using thread pool
+        success_count = 0
+        tasks = []
+        
+        print("\nStarting PDF form filling process...")
+        print(f"Template: {pdf_template}")
+        print(f"Output directory: {output_directory}")
+        
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_threads) as executor:
+            # Create tasks for each row
+            for idx, row_data in rows_to_process:
+                if should_exit:
+                    break
+                    
+                # Create task arguments
+                task_args = (
+                    idx,
+                    pdf_template,
+                    row_data,
+                    output_directory,
+                    headers,
+                    filename_field1,
+                    filename_field2,
+                    total_files
+                )
+                
+                # Submit task to executor
+                future = executor.submit(process_row_task, task_args)
+                tasks.append(future)
+            
+            # Process results as they complete
+            try:
+                for future in concurrent.futures.as_completed(tasks):
+                    if should_exit and not future.done():
+                        continue
+                        
+                    result = future.result()
+                    if result and result.get('success'):
+                        success_count += 1
+                        print(f"[{result['index']}/{result['total']}] Successfully processed: {os.path.basename(result['output_path'])} in {result['elapsed_time']:.1f} seconds")
+                    elif result:
+                        print(f"[{result['index']}/{result['total']}] Failed to process PDF")
+            except KeyboardInterrupt:
+                # Backup handler in case signal handler doesn't catch it
+                should_exit = True
+                print("\nKeyboard interrupt detected. Waiting for current tasks to finish...")
+            
+            # Handle cancellation if needed
+            if should_exit:
+                cancelled_count = 0
+                for future in tasks:
+                    if not future.done():
+                        future.cancel()
+                        cancelled_count += 1
+                
+                if cancelled_count > 0:
+                    print(f"Cancelled {cancelled_count} pending tasks")
+        
+        # Calculate final stats
         total_time = time.time() - total_start_time
+        
+        # Print summary
         print("\nProcessing Summary:")
-        print(f"Total files processed: {success_count}/{total_files}")
-        print(f"Total processing time: {total_time:.1f} seconds")
-        print(f"Average time per file: {(total_time/total_files):.1f} seconds")
+        if should_exit:
+            print(f"Process interrupted by user")
+            print(f"Completed files: {success_count}/{total_files}")
+            print(f"Cancelled/unprocessed: {total_files - success_count}")
+        else:
+            print(f"Total files processed: {success_count}/{total_files}")
+            if success_count > 0:
+                print(f"Total processing time: {total_time:.1f} seconds")
+                print(f"Average time per file: {(total_time/success_count):.1f} seconds")
+                if success_count > 1:
+                    print(f"Files per minute: {60 * success_count / total_time:.1f}")
+            
         print(f"Output directory: {os.path.abspath(output_directory)}")
         
     except Exception as e:
         print(f"Error: {str(e)}")
         traceback.print_exc()
         sys.exit(1)
+    finally:
+        # Clean exit if interrupted
+        if should_exit:
+            print("Script terminated due to user interrupt")
+            sys.exit(0)
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main() 
