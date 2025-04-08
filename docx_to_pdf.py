@@ -47,6 +47,10 @@ def convert_to_pdf_windows_batch(docx_files, pdf_dir, max_workers=4):
         
         import win32com.client
         import pywintypes
+        import pythoncom  # Import pythoncom module for COM initialization
+        
+        # Initialize COM for this thread
+        pythoncom.CoInitialize()
         
         word = None
         try:
@@ -87,6 +91,8 @@ def convert_to_pdf_windows_batch(docx_files, pdf_dir, max_workers=4):
                     word.Quit()
                 except:
                     pass
+            # Uninitialize COM for this thread
+            pythoncom.CoUninitialize()
         
         return thread_results, thread_success
     
@@ -107,15 +113,25 @@ def convert_to_pdf_windows_batch(docx_files, pdf_dir, max_workers=4):
             
             # Process results as they complete
             for future in as_completed(future_to_batch):
-                batch_results, batch_success = future.result()
-                results.extend(batch_results)
-                success_count += batch_success
+                try:
+                    batch_results, batch_success = future.result()
+                    results.extend(batch_results)
+                    success_count += batch_success
+                except Exception as e:
+                    print(f"Error in parallel conversion: {str(e)}")
+                    # Continue processing other batches even if one fails
     
     except Exception as e:
         print(f"Error in parallel conversion: {str(e)}")
     
     # Sort results by index for consistent output order
     results.sort(key=lambda x: x[0])
+    
+    # Verify success count against actual results
+    verified_success_count = sum(1 for r in results if r[1])
+    if verified_success_count != success_count:
+        print(f"Warning: Success count mismatch. Calculated: {verified_success_count}, Reported: {success_count}")
+        success_count = verified_success_count
     
     return success_count, total_files
 
@@ -275,12 +291,16 @@ def convert_to_pdf_macos_batch(docx_files, pdf_dir, max_workers=4):
     
     return success_count, total_files
 
-# Keep original functions for backward compatibility
 def convert_to_pdf_windows(docx_path, pdf_dir):
     """Convert Word document to PDF using Windows COM interface."""
     import win32com.client
     import pywintypes
+    import pythoncom  # Import pythoncom module for COM initialization
     
+    # Initialize COM for this thread
+    pythoncom.CoInitialize()
+    
+    word = None
     try:
         word = win32com.client.Dispatch("Word.Application")
         doc = word.Documents.Open(docx_path)
@@ -298,10 +318,15 @@ def convert_to_pdf_windows(docx_path, pdf_dir):
         return False, f"Error converting {os.path.basename(docx_path)}: {str(e)}"
     finally:
         try:
-            doc.Close(False)
-            word.Quit()
+            if 'doc' in locals() and doc:
+                doc.Close(False)
+            if word:
+                word.Quit()
         except:
             pass
+        
+        # Uninitialize COM for this thread
+        pythoncom.CoUninitialize()
 
 def convert_to_pdf_macos(docx_path, pdf_dir):
     """Convert Word document to PDF using AppleScript."""
@@ -374,6 +399,9 @@ def create_pdfs(input_dir, pdf_dir=None, max_workers=None):
     Returns:
         tuple: (success_count, total_files) indicating number of successfully converted files
     """
+    success_count = 0
+    total_files = 0
+    
     try:
         # Verify directory exists
         if not os.path.isdir(input_dir):
@@ -388,11 +416,12 @@ def create_pdfs(input_dir, pdf_dir=None, max_workers=None):
         docx_files = [os.path.join(input_dir, f) for f in os.listdir(input_dir) 
                      if f.endswith('.docx') and os.path.isfile(os.path.join(input_dir, f))]
         
+        total_files = len(docx_files)
         if not docx_files:
             print("No .docx files found in the specified directory.")
             return 0, 0
         
-        print(f"\nFound {len(docx_files)} .docx files to process")
+        print(f"\nFound {total_files} .docx files to process")
         print(f"Output directory: {os.path.abspath(pdf_dir)}")
         
         # Determine number of workers based on system capabilities if not specified
@@ -405,14 +434,43 @@ def create_pdfs(input_dir, pdf_dir=None, max_workers=None):
         overall_start = time.time()
         
         # Using optimized multithreaded conversion with persistent Word instances
-        if platform.system() == 'Windows':
-            print(f"\nUsing {max_workers} persistent Word instances, each handling multiple documents...")
-            success_count, total_files = convert_to_pdf_windows_batch(docx_files, pdf_dir, max_workers)
-        elif platform.system() == 'Darwin':  # macOS
-            print(f"\nUsing {max_workers} persistent Word instances, each handling multiple documents...")
-            success_count, total_files = convert_to_pdf_macos_batch(docx_files, pdf_dir, max_workers)
-        else:
-            raise ValueError("Unsupported operating system")
+        try:
+            if platform.system() == 'Windows':
+                print(f"\nUsing {max_workers} persistent Word instances, each handling multiple documents...")
+                success_count, _ = convert_to_pdf_windows_batch(docx_files, pdf_dir, max_workers)
+            elif platform.system() == 'Darwin':  # macOS
+                print(f"\nUsing {max_workers} persistent Word instances, each handling multiple documents...")
+                success_count, _ = convert_to_pdf_macos_batch(docx_files, pdf_dir, max_workers)
+            else:
+                raise ValueError("Unsupported operating system")
+        except Exception as e:
+            print(f"Error in batch conversion: {str(e)}")
+            print("Attempting to convert files individually as fallback...")
+            
+            # Fallback to individual conversion if batch fails
+            success_count = 0
+            for i, docx_path in enumerate(docx_files):
+                try:
+                    success, message = convert_to_pdf(docx_path, pdf_dir)
+                    if success:
+                        success_count += 1
+                    print(f"[{i+1}/{total_files}] {message}")
+                except Exception as e:
+                    print(f"[{i+1}/{total_files}] Error: {str(e)}")
+        
+        # Verify success count by counting actual PDF files
+        created_pdfs = []
+        for docx_path in docx_files:
+            pdf_name = os.path.splitext(os.path.basename(docx_path))[0] + ".pdf"
+            pdf_path = os.path.join(pdf_dir, pdf_name)
+            if os.path.exists(pdf_path):
+                created_pdfs.append(pdf_path)
+        
+        actual_pdf_count = len(created_pdfs)
+        if actual_pdf_count != success_count:
+            print(f"Warning: Success count ({success_count}) doesn't match actual PDF files found ({actual_pdf_count})")
+            print("Using actual count of PDF files created for reporting.")
+            success_count = actual_pdf_count
         
         # Calculate overall time
         overall_time = time.time() - overall_start
@@ -420,9 +478,9 @@ def create_pdfs(input_dir, pdf_dir=None, max_workers=None):
         # Print summary
         print("\nProcessing Summary:")
         print(f"Total time: {overall_time:.1f} seconds")
-        print(f"Average time per document: {overall_time/len(docx_files):.1f} seconds")
-        print(f"Documents per minute: {(len(docx_files) / overall_time) * 60:.1f}")
-        print(f"Total files processed: {success_count}/{len(docx_files)}")
+        if total_files > 0:
+            print(f"Average time per document: {overall_time/total_files:.1f} seconds")
+        print(f"PDF files created: {success_count}/{total_files}")
         print(f"Output directory: {os.path.abspath(pdf_dir)}")
         
         return success_count, total_files
@@ -431,7 +489,7 @@ def create_pdfs(input_dir, pdf_dir=None, max_workers=None):
         print(f"Error: {str(e)}")
         import traceback
         traceback.print_exc()
-        sys.exit(1)
+        return success_count, total_files  # Return what we have so far rather than exiting
 
 def main():
     """Main function to handle command line arguments."""
