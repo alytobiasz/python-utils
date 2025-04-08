@@ -22,6 +22,7 @@ Example:
 The config file format is the same as docx_template_filler.py, with additional options:
     keep_word_file = false  # Optional - set to true to keep both .docx and .pdf
     conversion_engine = word  # Optional - 'word' or 'libreoffice' (default: 'word')
+    max_threads = 2  # Optional - number of threads used for PDF conversion (default: auto-detected)
 """
 
 import sys
@@ -59,6 +60,17 @@ def main():
         
         # Get conversion engine preference (default to 'word')
         conversion_engine = config.get('conversion_engine', 'word').lower()
+        
+        # Get max_threads configuration if specified
+        max_workers = None
+        if 'max_threads' in config:
+            try:
+                max_workers = int(config['max_threads'])
+                if max_workers < 1:
+                    print(f"Warning: Invalid max_threads value '{max_workers}'. Must be at least 1. Using auto-detection.")
+                    max_workers = None
+            except ValueError:
+                print(f"Warning: Invalid max_threads value '{config['max_threads']}'. Must be an integer. Using auto-detection.")
         
         # Validate conversion engine choice
         if conversion_engine not in ['word', 'libreoffice']:
@@ -98,9 +110,9 @@ def main():
         # Step 2: Convert Word documents to PDF using selected engine
         print(f"\nStep 2: Converting to PDF using {conversion_engine.capitalize()}...")
         if conversion_engine == 'libreoffice':
-            pdf_success, pdf_total = create_pdfs_libreoffice(output_dir, output_dir)
+            pdf_success, pdf_total = create_pdfs_libreoffice(output_dir, output_dir, max_workers=max_workers)
         else:  # default to Word
-            pdf_success, pdf_total = create_pdfs_word(output_dir, output_dir)
+            pdf_success, pdf_total = create_pdfs_word(output_dir, output_dir, max_workers=max_workers)
         
         # Clean up Word files if not keeping them
         if not keep_word:
@@ -119,6 +131,8 @@ def main():
         print(f"PDF files created: {pdf_success}/{pdf_total}")
         print(f"Output directory: {os.path.abspath(output_dir)}")
         print(f"Conversion engine: {conversion_engine.capitalize()}")
+        if max_workers is not None:
+            print(f"Threads used: {max_workers}")
         if keep_word:
             print(f"Word files directory: {os.path.abspath(output_dir)}")
         
