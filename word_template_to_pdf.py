@@ -22,7 +22,7 @@ Example:
 The config file format is the same as docx_template_filler.py, with additional options:
     keep_word_file = false  # Optional - set to true to keep both .docx and .pdf
     conversion_engine = word  # Optional - 'word' or 'libreoffice' (default: 'word')
-    max_threads = 2  # Optional - number of threads used for PDF conversion (default: auto-detected)
+    max_threads = 1  # Optional - number of threads for PDF conversion (default: 1, recommended)
 """
 
 import sys
@@ -62,15 +62,19 @@ def main():
         conversion_engine = config.get('conversion_engine', 'word').lower()
         
         # Get max_threads configuration if specified
-        max_workers = None
+        max_workers = 1  # Default to 1 thread (recommended)
         if 'max_threads' in config:
             try:
                 max_workers = int(config['max_threads'])
                 if max_workers < 1:
-                    print(f"Warning: Invalid max_threads value '{max_workers}'. Must be at least 1. Using auto-detection.")
-                    max_workers = None
+                    print(f"Warning: Invalid max_threads value '{max_workers}'. Must be at least 1. Using 1 thread.")
+                    max_workers = 1
             except ValueError:
-                print(f"Warning: Invalid max_threads value '{config['max_threads']}'. Must be an integer. Using auto-detection.")
+                print(f"Warning: Invalid max_threads value '{config['max_threads']}'. Must be an integer. Using 1 thread.")
+        
+        # Notify if using more than 1 thread (since single-threaded is usually faster)
+        if max_workers > 1:
+            print(f"Note: Using {max_workers} threads for conversion (single-threaded mode is usually faster)")
         
         # Validate conversion engine choice
         if conversion_engine not in ['word', 'libreoffice']:

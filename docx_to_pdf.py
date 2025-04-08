@@ -14,17 +14,19 @@ Requirements:
         macOS: pip install pyobjc
 
 Usage:
-    python docx_to_pdf.py <directory_path>
+    python docx_to_pdf.py <directory_path> [max_threads]
 
 Example:
     python docx_to_pdf.py /path/to/documents
+    python docx_to_pdf.py /path/to/documents 4  # Use 4 threads for conversion
 
 Note:
     - The script will maintain the original .docx files
     - PDFs will be created in a 'pdf_exports' subdirectory
     - If a PDF with the same name already exists, it will be overwritten
     - Files in subdirectories are not processed (only top-level directory)
-    - For optimal performance, the script reuses a single Word instance for all conversions
+    - By default, a single Word instance is used (recommended for best performance)
+    - Multiple threads can be specified but may not improve performance
 """
 
 import sys
@@ -385,16 +387,15 @@ def convert_to_pdf(docx_path, pdf_dir):
     elapsed_time = time.time() - start_time
     return success, f"{message} in {elapsed_time:.1f} seconds"
 
-def create_pdfs(input_dir, pdf_dir=None, max_workers=None):
+def create_pdfs(input_dir, pdf_dir=None, max_workers=1):
     """
     Convert all Word (.docx) files in a directory to PDF format.
-    Uses multithreaded processing with persistent Word instances for optimal performance.
     
     Args:
         input_dir (str): Path to the directory containing Word documents
         pdf_dir (str, optional): Directory for PDF output. If None, creates 'pdf_exports' subdirectory
-        max_workers (int, optional): Maximum number of parallel Word instances to use. 
-                                   If None, uses a default based on CPU count.
+        max_workers (int, optional): Maximum number of parallel Word instances to use.
+                                  Default is 1, which is recommended for optimal performance.
         
     Returns:
         tuple: (success_count, total_files) indicating number of successfully converted files
@@ -424,22 +425,26 @@ def create_pdfs(input_dir, pdf_dir=None, max_workers=None):
         print(f"\nFound {total_files} .docx files to process")
         print(f"Output directory: {os.path.abspath(pdf_dir)}")
         
-        # Determine number of workers based on system capabilities if not specified
-        if max_workers is None:
-            import multiprocessing
-            # For persistent instances, limit to available CPU cores or 4, whichever is smaller
-            max_workers = min(multiprocessing.cpu_count(), 4)
+        # Ensure max_workers is at least 1
+        if max_workers is None or max_workers < 1:
+            max_workers = 1
+            
+        # Display appropriate message based on thread count
+        if max_workers == 1:
+            worker_message = "a single Word instance for all documents"
+        else:
+            worker_message = f"{max_workers} persistent Word instances, each handling multiple documents"
         
         # Track overall start time
         overall_start = time.time()
         
-        # Using optimized multithreaded conversion with persistent Word instances
+        # Use the specified number of threads (default is 1)
         try:
             if platform.system() == 'Windows':
-                print(f"\nUsing {max_workers} persistent Word instances, each handling multiple documents...")
+                print(f"\nUsing {worker_message}...")
                 success_count, _ = convert_to_pdf_windows_batch(docx_files, pdf_dir, max_workers)
             elif platform.system() == 'Darwin':  # macOS
-                print(f"\nUsing {max_workers} persistent Word instances, each handling multiple documents...")
+                print(f"\nUsing {worker_message}...")
                 success_count, _ = convert_to_pdf_macos_batch(docx_files, pdf_dir, max_workers)
             else:
                 raise ValueError("Unsupported operating system")
@@ -494,7 +499,7 @@ def create_pdfs(input_dir, pdf_dir=None, max_workers=None):
 def main():
     """Main function to handle command line arguments."""
     if len(sys.argv) < 2 or len(sys.argv) > 3:
-        print("Usage: python docx_to_pdf.py <directory_path> [max_workers]")
+        print("Usage: python docx_to_pdf.py <directory_path> [max_threads]")
         sys.exit(1)
     
     # Check if running on supported OS
@@ -504,9 +509,23 @@ def main():
     
     # Parse arguments
     input_dir = sys.argv[1]
-    max_workers = int(sys.argv[2]) if len(sys.argv) == 3 else None
+    max_threads = 1  # Default to 1 thread
     
-    create_pdfs(input_dir, max_workers=max_workers)
+    if len(sys.argv) == 3:
+        try:
+            max_threads = int(sys.argv[2])
+            if max_threads < 1:
+                print(f"Warning: Invalid max_threads value '{max_threads}'. Must be at least 1. Using 1 thread.")
+                max_threads = 1
+        except ValueError:
+            print(f"Warning: Invalid max_threads value '{sys.argv[2]}'. Must be an integer. Using 1 thread.")
+    
+    if max_threads == 1:
+        print("Using single-threaded mode (recommended for optimal performance)")
+    else:
+        print(f"Using {max_threads} threads for conversion (single-threaded mode is usually faster)")
+    
+    create_pdfs(input_dir, max_workers=max_threads)
 
 if __name__ == "__main__":
     main() 
