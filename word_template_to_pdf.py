@@ -29,6 +29,7 @@ import sys
 import os
 import platform
 import time
+import subprocess
 from datetime import datetime
 
 # Import the shared utility function for reading config files
@@ -46,12 +47,44 @@ except ImportError:
 # Import docx_template_filler as it doesn't depend on platform-specific libraries
 from docx_template_filler import fill_docx_templates
 
-# Import LibreOffice version if available
+# Try to import LibreOffice-related functions
+libreoffice_module_available = False
+libreoffice_installed = False
+libreoffice_available = False
+
 try:
-    from libreoffice_docx_to_pdf import create_pdfs as create_pdfs_libreoffice
-    libreoffice_available = True
+    # Try to import both the conversion function and any available check functions
+    from libreoffice_docx_to_pdf import (
+        create_pdfs as create_pdfs_libreoffice,
+        is_libreoffice_installed  # Try to import this function if it exists
+    )
+    libreoffice_module_available = True
+    
+    # Use the module's own check function if available
+    libreoffice_installed = is_libreoffice_installed()
+    libreoffice_available = libreoffice_installed
+    
 except ImportError:
+    # Module not available at all
+    libreoffice_module_available = False
     libreoffice_available = False
+
+except AttributeError:
+    # Module available but is_libreoffice_installed function doesn't exist
+    libreoffice_module_available = True
+    
+    # Fall back to a simple check
+    try:
+        # Simple check: try to run the soffice command
+        if platform.system() == 'Windows':
+            result = subprocess.run(['where', 'soffice'], capture_output=True, text=True)
+        else:  # macOS, Linux, etc.
+            result = subprocess.run(['which', 'soffice'], capture_output=True, text=True)
+        libreoffice_installed = result.returncode == 0
+        libreoffice_available = libreoffice_installed
+    except Exception:
+        libreoffice_installed = False
+        libreoffice_available = False
 
 def main():
     """Main function to coordinate template filling and PDF conversion."""
@@ -70,14 +103,50 @@ def main():
         # Get conversion engine preference (default to 'word')
         conversion_engine = config.get('conversion_engine', 'word').lower()
         
+        # Validate conversion engine choice
+        if conversion_engine not in ['word', 'libreoffice']:
+            print(f"Warning: Invalid conversion_engine '{conversion_engine}'. Must be 'word' or 'libreoffice'. Defaulting to 'word'.")
+            conversion_engine = 'word'
+        
+        # Check if LibreOffice is requested but not available
+        if conversion_engine == 'libreoffice':
+            if not libreoffice_module_available:
+                print("ERROR: LibreOffice conversion requested but libreoffice_docx_to_pdf.py module not found.")
+                print("Please ensure libreoffice_docx_to_pdf.py is in the same directory.")
+                if dependencies_ok:
+                    print("Falling back to Word conversion.")
+                    conversion_engine = 'word'
+                else:
+                    print("Cannot continue: Neither LibreOffice nor Word conversion is available.")
+                    sys.exit(1)
+            elif not libreoffice_installed:
+                print("ERROR: LibreOffice conversion requested but LibreOffice is not installed or not found.")
+                print("Please install LibreOffice and ensure it's in the system PATH.")
+                if dependencies_ok:
+                    print("Falling back to Word conversion.")
+                    conversion_engine = 'word'
+                else:
+                    print("Cannot continue: Neither LibreOffice nor Word conversion is available.")
+                    sys.exit(1)
+        
         # If using Word conversion, ensure dependencies are installed
         if conversion_engine == 'word' and not dependencies_ok:
             if libreoffice_available:
                 print("\nSwitching to LibreOffice conversion engine due to missing dependencies for Word.")
                 conversion_engine = 'libreoffice'
             else:
-                print("\nCannot continue: Required dependencies for Word conversion are missing.")
-                print("Please install the required packages or use LibreOffice conversion instead.")
+                print("\nERROR: Required dependencies for Word conversion are missing.")
+                if not libreoffice_module_available:
+                    print("libreoffice_docx_to_pdf.py module not found.")
+                elif not libreoffice_installed:
+                    print("LibreOffice is not installed or not found on your system.")
+                print("\nPlease either:")
+                print("1. Install the required packages for Word automation:")
+                if platform.system() == 'Windows':
+                    print("   pip install pywin32")
+                elif platform.system() == 'Darwin':
+                    print("   pip install pyobjc")
+                print("2. Install LibreOffice and ensure libreoffice_docx_to_pdf.py is available")
                 sys.exit(1)
         
         # Get max_threads configuration if specified
@@ -94,17 +163,6 @@ def main():
         # Notify if using more than 1 thread (since single-threaded is usually faster)
         if max_workers > 1:
             print(f"Note: Using {max_workers} threads for conversion (single-threaded mode is usually faster)")
-        
-        # Validate conversion engine choice
-        if conversion_engine not in ['word', 'libreoffice']:
-            print(f"Warning: Invalid conversion_engine '{conversion_engine}'. Must be 'word' or 'libreoffice'. Defaulting to 'word'.")
-            conversion_engine = 'word'
-        
-        # Check if LibreOffice is requested but not available
-        if conversion_engine == 'libreoffice' and not libreoffice_available:
-            print("Warning: LibreOffice conversion requested but libreoffice_docx_to_pdf.py module not found.")
-            print("Falling back to Word conversion. Please ensure libreoffice_docx_to_pdf.py is in the same directory.")
-            conversion_engine = 'word'
         
         # Check if running on supported OS for Word conversion
         if conversion_engine == 'word' and platform.system() not in ['Windows', 'Darwin']:

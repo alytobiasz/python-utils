@@ -36,6 +36,26 @@ import shutil
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
+def is_libreoffice_installed():
+    """
+    Simple check if LibreOffice is installed and available on the system.
+    
+    Returns:
+        bool: True if LibreOffice is found in PATH, False otherwise
+    """
+    try:
+        # Use appropriate command based on platform
+        if platform.system() == 'Windows':
+            result = subprocess.run(['where', 'soffice'], capture_output=True, text=True)
+        else:  # macOS, Linux, etc.
+            result = subprocess.run(['which', 'soffice'], capture_output=True, text=True)
+        
+        # Return True if command was successful (return code 0)
+        return result.returncode == 0
+    except Exception:
+        # If any error occurs, assume LibreOffice is not available
+        return False
+
 def get_libreoffice_cmd():
     """Determine the correct LibreOffice command for the current platform."""
     if platform.system() == 'Windows':
