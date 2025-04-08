@@ -135,11 +135,12 @@ def main():
                 print("\nSwitching to LibreOffice conversion engine due to missing dependencies for Word.")
                 conversion_engine = 'libreoffice'
             else:
-                print("\nERROR: Required dependencies for Word conversion are missing.")
+                print("\nERROR: Word conversion unavailable and LibreOffice fallback failed.")
                 if not libreoffice_module_available:
                     print("libreoffice_docx_to_pdf.py module not found.")
                 elif not libreoffice_installed:
                     print("LibreOffice is not installed or not found on your system.")
+                
                 print("\nPlease either:")
                 print("1. Install the required packages for Word automation:")
                 if platform.system() == 'Windows':
