@@ -92,7 +92,7 @@ def find_fields_in_document(doc):
 
 def replace_fields_in_document(doc, data):
     """
-    Replace all bracketed fields with corresponding values.
+    Replace all bracketed fields with corresponding values while preserving formatting.
     
     Args:
         doc: Word document object
@@ -103,23 +103,99 @@ def replace_fields_in_document(doc, data):
     for key in data:
         variations = normalize_field_name(key)
         for variant in variations:
-            field_mapping[variant] = data[key]
+            field_mapping[variant] = data[key] if data[key] is not None else ''
     
-    # Replace in paragraphs
+    # Process paragraphs
     for paragraph in doc.paragraphs:
-        for field_name, value in field_mapping.items():
-            if f"[{field_name}]" in paragraph.text:
-                paragraph.text = paragraph.text.replace(f"[{field_name}]", 
-                    str(value) if value is not None else '')
+        replace_fields_in_paragraph(paragraph, field_mapping)
     
-    # Replace in tables
+    # Process tables
     for table in doc.tables:
         for row in table.rows:
             for cell in row.cells:
-                for field_name, value in field_mapping.items():
-                    if f"[{field_name}]" in cell.text:
-                        cell.text = cell.text.replace(f"[{field_name}]", 
-                            str(value) if value is not None else '')
+                for paragraph in cell.paragraphs:
+                    replace_fields_in_paragraph(paragraph, field_mapping)
+
+def replace_fields_in_paragraph(paragraph, field_mapping):
+    """
+    Replace fields in a paragraph while preserving formatting.
+    
+    Args:
+        paragraph: Paragraph object
+        field_mapping (dict): Dictionary mapping field names to values
+    """
+    # Check if paragraph contains any fields
+    if not any(f"[{field}]" in paragraph.text for field in field_mapping):
+        return
+    
+    # First, collect all field patterns that need to be replaced
+    pattern = r'\[([^\]]+)\]'
+    field_matches = list(re.finditer(pattern, paragraph.text))
+    
+    # If no matches, return
+    if not field_matches:
+        return
+    
+    # Process each run, preserving formatting
+    for run_index, run in enumerate(paragraph.runs):
+        for field_name, value in field_mapping.items():
+            if f"[{field_name}]" in run.text:
+                # Replace the field while preserving the run's formatting
+                run.text = run.text.replace(f"[{field_name}]", str(value))
+    
+    # Check if any fields were broken across runs and fix them
+    # This happens when a field like [First Name] is split across multiple runs
+    # For example: run1="Hello [First", run2=" Name]"
+    remaining_text = paragraph.text
+    merged_runs = []
+    
+    # Find any remaining fields that might be split across runs
+    split_fields = re.finditer(pattern, remaining_text)
+    for match in split_fields:
+        field_text = match.group(0)  # e.g., "[First Name]"
+        field_name = match.group(1)  # e.g., "First Name"
+        
+        if field_name in field_mapping:
+            # Find the starting run that contains the beginning of the field
+            start_index = remaining_text.find(field_text)
+            if start_index >= 0:
+                # Calculate the runs that contain parts of this field
+                chars_so_far = 0
+                start_run = None
+                end_run = None
+                
+                for i, run in enumerate(paragraph.runs):
+                    run_length = len(run.text)
+                    
+                    # Check if this run contains the start of the field
+                    if start_run is None and chars_so_far <= start_index < chars_so_far + run_length:
+                        start_run = i
+                    
+                    # Check if this run contains the end of the field
+                    if start_run is not None and chars_so_far + run_length >= start_index + len(field_text):
+                        end_run = i
+                        break
+                    
+                    chars_so_far += run_length
+                
+                # If we found both start and end, and they're different (split across runs)
+                if start_run is not None and end_run is not None and start_run != end_run:
+                    # This is where we'll handle fields split across runs
+                    # Record this split field for later processing
+                    merged_runs.append((start_run, end_run, field_text, str(field_mapping[field_name])))
+    
+    # Process any fields that were split across runs
+    for start_run, end_run, field_text, replacement in reversed(merged_runs):
+        # Extract the text from all affected runs
+        combined_text = ''.join(paragraph.runs[i].text for i in range(start_run, end_run + 1))
+        
+        # Replace the field in the combined text
+        new_text = combined_text.replace(field_text, replacement)
+        
+        # Put the text in the first run and clear others
+        paragraph.runs[start_run].text = new_text
+        for i in range(start_run + 1, end_run + 1):
+            paragraph.runs[i].text = ''
 
 def read_config(config_path):
     """
