@@ -42,7 +42,7 @@ Important Notes:
 
 import sys
 import os
-from datetime import datetime
+import datetime as dt
 from openpyxl import load_workbook
 from pdfrw import PdfReader, PdfWriter, PdfDict, PdfName, PdfObject
 import fitz
@@ -53,6 +53,7 @@ import re
 import concurrent.futures
 import threading
 import signal
+from utils import format_date, sanitize_filename, read_config, get_unique_filename  # Import shared utilities
 
 # Global flag to track if script should exit (for handling keyboard interrupts)
 should_exit = False
@@ -75,26 +76,6 @@ def signal_handler(sig, frame):
 # Register signal handlers
 signal.signal(signal.SIGINT, signal_handler)  # Handles Ctrl+C
 signal.signal(signal.SIGTERM, signal_handler)  # Handles termination signal
-
-def normalize_field_name(name):
-    """Normalize field name to handle variations in capitalization and spacing."""
-    if not name:
-        return []
-    
-    # Generate variations with different capitalizations and spacings
-    name = str(name).strip()
-    variations = [
-        name,
-        name.lower(),
-        name.upper(),
-        name.title(),
-        name.replace(" ", ""),
-        name.replace(" ", "_"),
-        name.replace("_", " ")
-    ]
-    
-    # Remove duplicates and empty strings
-    return list(set(var for var in variations if var))
 
 def read_excel_data(excel_path):
     """Read data from Excel file."""
@@ -150,6 +131,9 @@ def fill_pdf_form(template_path, data_row, temp_output_path):
                     if value is None or str(value).strip() == '':
                         field.V = ''
                     else:
+                        # Format dates consistently if the value is a date
+                        if isinstance(value, dt.date) or isinstance(value, dt.datetime):
+                            value = format_date(value, include_time=False)
                         field.V = str(value).strip()
                     field.AP = ''
                     fields_filled += 1
@@ -332,50 +316,6 @@ def process_pdf(template_path, data_row, output_path, fields_to_flatten):
                     if delay == 1.0:  # Only print warning on last attempt
                         print(f"Warning: Could not remove temporary file {temp_path}: {e}")
 
-def sanitize_filename(filename):
-    """Remove invalid characters from filename."""
-    # Replace invalid characters with underscores
-    sanitized = re.sub(r'[\\/*?:"<>|]', "_", filename)
-    # Remove leading/trailing spaces and dots
-    sanitized = sanitized.strip(". ")
-    # Default filename if empty
-    if not sanitized:
-        sanitized = "document"
-    return sanitized
-
-def read_config(config_path):
-    """
-    Read configuration from a file.
-    
-    Args:
-        config_path (str): Path to the configuration file
-        
-    Returns:
-        dict: Configuration parameters
-        
-    Raises:
-        ValueError: If required fields are missing
-    """
-    config = {}
-    required_fields = ['excel_file', 'template', 'output_directory']
-    
-    try:
-        with open(config_path, 'r') as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith('#'):
-                    key, value = map(str.strip, line.split('=', 1))
-                    config[key] = value
-    except Exception as e:
-        raise ValueError(f"Error reading config file: {str(e)}")
-    
-    # Check for required fields
-    missing = [field for field in required_fields if field not in config]
-    if missing:
-        raise ValueError(f"Missing required fields in config file: {', '.join(missing)}")
-    
-    return config
-
 def process_row_task(args):
     """Process a single row from the Excel file (for threading)."""
     global should_exit
@@ -404,17 +344,14 @@ def process_row_task(args):
             filename = f"{field1_value} {field2_value}".strip()
         else:
             # Fallback to timestamp if both fields are empty
-            filename = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{idx}"
+            filename = f"{dt.datetime.now().strftime('%Y%m%d_%H%M%S')}_{idx}"
         
         # Sanitize filename
         filename = sanitize_filename(filename)
         
         # Add .pdf extension and handle duplicates
-        output_path = os.path.join(output_dir, f"{filename}.pdf")
-        counter = 1
-        while os.path.exists(output_path):
-            output_path = os.path.join(output_dir, f"{filename}_{counter}.pdf")
-            counter += 1
+        base_path = os.path.join(output_dir, filename)
+        output_path = get_unique_filename(base_path, "pdf")
         
         success = process_pdf(template_path, data, output_path, headers)
         elapsed_time = time.time() - start_time
@@ -477,16 +414,12 @@ def main():
         
         # Verify filename fields exist in headers if specified
         if filename_field1:
-            variations1 = normalize_field_name(filename_field1)
-            if not any(var in headers for var in variations1):
+            if filename_field1 not in headers:
                 raise ValueError(f"Specified filename field '{filename_field1}' not found in Excel headers")
-            filename_field1 = next(var for var in variations1 if var in headers)
             
         if filename_field2:
-            variations2 = normalize_field_name(filename_field2)
-            if not any(var in headers for var in variations2):
+            if filename_field2 not in headers:
                 raise ValueError(f"Specified filename field '{filename_field2}' not found in Excel headers")
-            filename_field2 = next(var for var in variations2 if var in headers)
         
         if not filename_field1 and not filename_field2:
             print("No filename fields specified - using timestamps for output files")

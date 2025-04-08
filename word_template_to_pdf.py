@@ -30,8 +30,11 @@ import platform
 import time
 from datetime import datetime
 
+# Import the shared utility function for reading config files
+from utils import read_config
+
 # Import the functions from both scripts
-from docx_template_filler import read_config, fill_docx_templates
+from docx_template_filler import fill_docx_templates
 from docx_to_pdf import create_pdfs as create_pdfs_word
 # Import LibreOffice version if available
 try:

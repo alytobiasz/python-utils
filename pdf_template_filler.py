@@ -44,11 +44,12 @@ Note:
 import sys
 import os
 import re
-from datetime import datetime
+import datetime as dt
 import time
 from openpyxl import load_workbook
 import traceback
 import fitz  # PyMuPDF
+from utils import format_date, sanitize_filename, read_config, get_unique_filename  # Import shared utilities
 
 def find_fields_in_pdf(pdf_path):
     """
@@ -113,12 +114,13 @@ def replace_fields_in_pdf(pdf_path, output_path, data):
                 'ZapfDingbats': 'ZapfDingbats'
             }
             
+            # Add a simple field mapping with exact field names
             for key, value in data.items():
-                replace_fields_in_pdf.field_mapping[f"[{key}]"] = str(value) if value is not None else ''
+                replace_fields_in_pdf.field_mapping[f"[{key}]"] = value
         else:
             # Update values in existing mapping
             for key, value in data.items():
-                replace_fields_in_pdf.field_mapping[f"[{key}]"] = str(value) if value is not None else ''
+                replace_fields_in_pdf.field_mapping[f"[{key}]"] = value
         
         # Open the PDF
         doc = fitz.open(pdf_path)
@@ -229,63 +231,10 @@ def replace_fields_in_pdf(pdf_path, output_path, data):
         print(f"Error modifying PDF: {e}")
         raise
 
-def read_config(config_path):
-    """
-    Read configuration from a file.
-    
-    Args:
-        config_path (str): Path to the configuration file
-        
-    Returns:
-        dict: Configuration parameters
-    """
-    config = {}
-    required_fields = ['excel_file', 'template', 'output_directory']
-    
-    try:
-        with open(config_path, 'r') as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith('#'):
-                    key, value = map(str.strip, line.split('=', 1))
-                    config[key] = value
-    except Exception as e:
-        raise ValueError(f"Error reading config file: {str(e)}")
-    
-    # Check for required fields
-    missing = [field for field in required_fields if field not in config]
-    if missing:
-        raise ValueError(f"Missing required fields in config file: {', '.join(missing)}")
-    
-    return config
-
-def sanitize_filename(filename):
-    """
-    Sanitize a filename by removing or replacing invalid characters.
-    
-    Args:
-        filename (str): The filename to sanitize
-        
-    Returns:
-        str: The sanitized filename
-    """
-    # Replace invalid characters with underscores
-    invalid_chars = r'[<>:"/\\|?*]'
-    filename = re.sub(invalid_chars, '_', filename)
-    filename = filename.strip('. ')
-    filename = re.sub(r'[\s_]+', '_', filename)
-    
-    # Limit length (Windows has a 255 character limit)
-    max_length = 200
-    if len(filename) > max_length:
-        filename = filename[:max_length]
-    
-    return filename
-
 def main():
     """Main function to process PDF documents."""
     if len(sys.argv) != 2:
-        print("Usage: python pdf_template_fill.py <config_file>")
+        print("Usage: python pdf_template_filler.py <config_file>")
         sys.exit(1)
     
     try:
@@ -346,9 +295,22 @@ def main():
             start_time = time.time()
             
             try:
-                # Create data dictionary using pre-computed field variations
-                data = {headers[i]: str(val) if val is not None else '' 
-                       for i, val in enumerate(row)}
+                # Create data dictionary with formatted dates
+                data = {}
+                for i, cell in enumerate(row_cells):
+                    if i < len(headers):
+                        header = headers[i]
+                        value = cell.value
+                        
+                        # Format dates consistently
+                        if isinstance(value, (dt.datetime, dt.date)):
+                            value = format_date(value)
+                        elif value is not None:
+                            value = str(value)
+                        else:
+                            value = ''
+                            
+                        data[header] = value
                 
                 # Generate output filename
                 if filename_field1 or filename_field2:
@@ -356,27 +318,21 @@ def main():
                     field2_value = data.get(filename_field2, '').strip()
                     filename = f"{field1_value} {field2_value}".strip()
                 else:
-                    filename = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    filename = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
                 
                 # Sanitize filename
                 filename = sanitize_filename(filename)
                 
-                # Create output path
-                output_path = os.path.join(output_directory, f"{filename}.pdf")
-                
-                # Handle duplicate filenames
-                counter = 1
-                while os.path.exists(output_path):
-                    filename = f"{filename}_{counter}"
-                    output_path = os.path.join(output_directory, f"{filename}.pdf")
-                    counter += 1
+                # Create output path and handle duplicates
+                base_path = os.path.join(output_directory, filename)
+                output_path = get_unique_filename(base_path, "pdf")
                 
                 # Replace fields and save PDF
                 replace_fields_in_pdf(pdf_template, output_path, data)
                 
                 success_count += 1
                 elapsed_time = time.time() - start_time
-                print(f"Processed {processed_count}/{total_files}: {filename}.pdf in {elapsed_time:.1f} seconds")
+                print(f"Processed {processed_count}/{total_files}: {os.path.basename(output_path)} in {elapsed_time:.1f} seconds")
                 
             except Exception as e:
                 print(f"Error processing row {processed_count}: {str(e)}")

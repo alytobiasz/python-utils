@@ -35,17 +35,19 @@ Usage:
 Note:
     - Field names in the document must match Excel headers exactly (excluding brackets)
     - Fields are case-sensitive: [First_Name] ≠ [first_name]
-    - Output files will be named using the specified fields (or timestamp if omitted)
+    - Output files will be named using the specified filename fields (or timestamp if omitted)
+    - All dates are formatted as "January 1, 2025" for better readability
 """
 
 import sys
 import os
 import re
-from datetime import datetime
+import datetime as dt
 import time
 from docx import Document
 from openpyxl import load_workbook
 import traceback
+from utils import format_excel_cell_date, read_config, sanitize_filename, get_unique_filename
 
 def normalize_field_name(name):
     """
@@ -197,59 +199,6 @@ def replace_fields_in_paragraph(paragraph, field_mapping):
         for i in range(start_run + 1, end_run + 1):
             paragraph.runs[i].text = ''
 
-def read_config(config_path):
-    """
-    Read configuration from a file.
-    
-    Args:
-        config_path (str): Path to the configuration file
-        
-    Returns:
-        dict: Configuration parameters
-    """
-    config = {}
-    required_fields = ['excel_file', 'template', 'output_directory']
-    
-    try:
-        with open(config_path, 'r') as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith('#'):
-                    key, value = map(str.strip, line.split('=', 1))
-                    config[key] = value
-    except Exception as e:
-        raise ValueError(f"Error reading config file: {str(e)}")
-    
-    # Check for required fields
-    missing = [field for field in required_fields if field not in config]
-    if missing:
-        raise ValueError(f"Missing required fields in config file: {', '.join(missing)}")
-    
-    return config
-
-def sanitize_filename(filename):
-    """
-    Sanitize a filename by removing or replacing invalid characters.
-    
-    Args:
-        filename (str): The filename to sanitize
-        
-    Returns:
-        str: The sanitized filename
-    """
-    # Replace invalid characters with underscores
-    invalid_chars = r'[<>:"/\\|?*]'
-    filename = re.sub(invalid_chars, '_', filename)
-    filename = filename.strip('. ')
-    filename = re.sub(r'[\s_]+', '_', filename)
-    
-    # Limit length (Windows has a 255 character limit)
-    max_length = 200
-    if len(filename) > max_length:
-        filename = filename[:max_length]
-    
-    return filename
-
 def fill_docx_templates(config):
     """
     Fill Word document templates with data from Excel.
@@ -329,8 +278,7 @@ def fill_docx_templates(config):
             
             try:
                 # Create data dictionary
-                data = {headers[i]: str(val) if val is not None else '' 
-                       for i, val in enumerate(row)}
+                data = {headers[i]: format_excel_cell_date(cell) for i, cell in enumerate(row_cells)}
                 
                 # Generate output filename from specified fields
                 if filename_field1 or filename_field2:
@@ -339,20 +287,14 @@ def fill_docx_templates(config):
                     filename = f"{field1_value} {field2_value}".strip()
                 else:
                     # Use timestamp if no fields specified
-                    filename = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    filename = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
                 
                 # Sanitize filename
                 filename = sanitize_filename(filename)
                 
-                # Create output path
-                docx_path = os.path.join(output_directory, f"{filename}.docx")
-                
-                # Handle duplicate filenames
-                counter = 1
-                while os.path.exists(docx_path):
-                    filename = f"{filename}_{counter}"
-                    docx_path = os.path.join(output_directory, f"{filename}.docx")
-                    counter += 1
+                # Create output path and handle duplicates
+                base_path = os.path.join(output_directory, filename)
+                docx_path = get_unique_filename(base_path, "docx")
                 
                 # Create and save the filled document
                 doc = Document(word_template)
@@ -361,7 +303,7 @@ def fill_docx_templates(config):
                 
                 success_count += 1
                 elapsed_time = time.time() - start_time
-                print(f"Processed {processed_count}/{total_files}: {filename}.docx in {elapsed_time:.1f} seconds")
+                print(f"Processed {processed_count}/{total_files}: {os.path.basename(docx_path)} in {elapsed_time:.1f} seconds")
                 
             except Exception as e:
                 print(f"Error processing row {processed_count}: {str(e)}")
