@@ -34,9 +34,18 @@ from datetime import datetime
 # Import the shared utility function for reading config files
 from utils import read_config
 
-# Import the functions from both scripts
+# Import docx_to_pdf for conversion and dependency checking
+try:
+    from docx_to_pdf import check_dependencies, create_pdfs as create_pdfs_word
+    dependencies_ok = check_dependencies()
+except ImportError:
+    # This will happen if running on an unsupported OS or missing dependencies
+    dependencies_ok = False
+    create_pdfs_word = None
+
+# Import docx_template_filler as it doesn't depend on platform-specific libraries
 from docx_template_filler import fill_docx_templates
-from docx_to_pdf import create_pdfs as create_pdfs_word
+
 # Import LibreOffice version if available
 try:
     from libreoffice_docx_to_pdf import create_pdfs as create_pdfs_libreoffice
@@ -60,6 +69,16 @@ def main():
         
         # Get conversion engine preference (default to 'word')
         conversion_engine = config.get('conversion_engine', 'word').lower()
+        
+        # If using Word conversion, ensure dependencies are installed
+        if conversion_engine == 'word' and not dependencies_ok:
+            if libreoffice_available:
+                print("\nSwitching to LibreOffice conversion engine due to missing dependencies for Word.")
+                conversion_engine = 'libreoffice'
+            else:
+                print("\nCannot continue: Required dependencies for Word conversion are missing.")
+                print("Please install the required packages or use LibreOffice conversion instead.")
+                sys.exit(1)
         
         # Get max_threads configuration if specified
         max_workers = 1  # Default to 1 thread (recommended)

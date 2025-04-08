@@ -8,6 +8,7 @@ This module contains shared utility functions used by multiple document processi
 - docx_template_filler.py
 - pdf_form_filler.py
 - pdf_template_filler.py
+- word_template_to_pdf.py
 
 Functions include:
 - Common date formatting for consistent display of dates

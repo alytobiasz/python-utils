@@ -36,6 +36,45 @@ import platform
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 
+def check_dependencies():
+    """Check that platform-specific dependencies are installed."""
+    system = platform.system()
+    
+    if system == 'Windows':
+        try:
+            # Check if pywin32 is installed
+            import win32com.client
+            import pythoncom
+            return True
+        except ImportError:
+            print("\nERROR: Required package 'pywin32' is not installed!")
+            print("Please install it using the following command:")
+            print("    pip install pywin32")
+            print("\nThis package is required for Word automation on Windows.")
+            return False
+    
+    elif system == 'Darwin':  # macOS
+        try:
+            # Check if pyobjc is installed
+            import objc
+            return True
+        except ImportError:
+            print("\nERROR: Required package 'pyobjc' is not installed!")
+            print("Please install it using the following command:")
+            print("    pip install pyobjc")
+            print("\nThis package is required for Word automation on macOS.")
+            return False
+    
+    else:
+        print(f"\nERROR: Unsupported operating system: {system}")
+        print("This script only supports Windows and macOS.")
+        if system == 'Linux':
+            print("For Linux, consider using the LibreOffice conversion engine instead.")
+        return False
+
+# Check dependencies before proceeding
+dependencies_ok = check_dependencies()
+
 def convert_to_pdf_windows_batch(docx_files, pdf_dir, max_workers=4):
     """Convert multiple Word documents to PDF using a pool of persistent Word instances."""
     total_files = len(docx_files)
@@ -500,6 +539,11 @@ def main():
     """Main function to handle command line arguments."""
     if len(sys.argv) < 2 or len(sys.argv) > 3:
         print("Usage: python docx_to_pdf.py <directory_path> [max_threads]")
+        sys.exit(1)
+    
+    # Check if dependencies are installed
+    if not dependencies_ok:
+        print("\nCannot continue: Required dependencies are missing.")
         sys.exit(1)
     
     # Check if running on supported OS
