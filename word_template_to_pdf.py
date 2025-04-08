@@ -35,27 +35,25 @@ from datetime import datetime
 # Import the shared utility function for reading config files
 from utils import read_config
 
-# Import docx_to_pdf for conversion and dependency checking
-word_conversion_available = False
-create_pdfs_word = None
-check_dependencies = None
-
-try:
-    # Just import the functions without running check_dependencies yet
-    from docx_to_pdf import check_dependencies, create_pdfs as create_pdfs_word
-    word_conversion_available = True
-except ImportError:
-    # This will happen if running on an unsupported OS or missing dependencies
-    word_conversion_available = False
-
 # Import docx_template_filler as it doesn't depend on platform-specific libraries
 from docx_template_filler import fill_docx_templates
 
-# Try to import LibreOffice-related functions
+# Set up module availability flags
+docx_to_pdf = None
+word_conversion_available = False
 libreoffice_module_available = False
 libreoffice_installed = False
 libreoffice_available = False
 
+# Try to import the docx_to_pdf module (but not run check_dependencies yet)
+try:
+    import docx_to_pdf
+    word_conversion_available = True
+except ImportError:
+    # This will happen if the module can't be found
+    word_conversion_available = False
+
+# Try to import LibreOffice-related functions
 try:
     # Try to import both the conversion function and any available check functions
     from libreoffice_docx_to_pdf import (
@@ -114,9 +112,12 @@ def main():
         
         # Run dependency check for Word if needed
         dependencies_ok = False
-        if conversion_engine == 'word' and word_conversion_available and check_dependencies:
+        if conversion_engine == 'word' and word_conversion_available:
             # Only run the check if we're planning to use Word
-            dependencies_ok = check_dependencies()
+            try:
+                dependencies_ok = docx_to_pdf.check_dependencies()
+            except:
+                dependencies_ok = False
         
         # Check if LibreOffice is requested but not available
         if conversion_engine == 'libreoffice':
@@ -204,7 +205,11 @@ def main():
         if conversion_engine == 'libreoffice':
             pdf_success, pdf_total = create_pdfs_libreoffice(output_dir, output_dir, max_workers=max_workers)
         else:  # default to Word
-            pdf_success, pdf_total = create_pdfs_word(output_dir, output_dir, max_workers=max_workers)
+            try:
+                pdf_success, pdf_total = docx_to_pdf.create_pdfs(output_dir, output_dir, max_workers=max_workers)
+            except Exception as e:
+                print(f"Error during PDF conversion: {str(e)}")
+                sys.exit(1)
         
         # Clean up Word files if not keeping them
         if not keep_word:
