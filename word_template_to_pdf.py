@@ -36,13 +36,17 @@ from datetime import datetime
 from utils import read_config
 
 # Import docx_to_pdf for conversion and dependency checking
+word_conversion_available = False
+create_pdfs_word = None
+check_dependencies = None
+
 try:
+    # Just import the functions without running check_dependencies yet
     from docx_to_pdf import check_dependencies, create_pdfs as create_pdfs_word
-    dependencies_ok = check_dependencies()
+    word_conversion_available = True
 except ImportError:
     # This will happen if running on an unsupported OS or missing dependencies
-    dependencies_ok = False
-    create_pdfs_word = None
+    word_conversion_available = False
 
 # Import docx_template_filler as it doesn't depend on platform-specific libraries
 from docx_template_filler import fill_docx_templates
@@ -108,12 +112,18 @@ def main():
             print(f"Warning: Invalid conversion_engine '{conversion_engine}'. Must be 'word' or 'libreoffice'. Defaulting to 'word'.")
             conversion_engine = 'word'
         
+        # Run dependency check for Word if needed
+        dependencies_ok = False
+        if conversion_engine == 'word' and word_conversion_available and check_dependencies:
+            # Only run the check if we're planning to use Word
+            dependencies_ok = check_dependencies()
+        
         # Check if LibreOffice is requested but not available
         if conversion_engine == 'libreoffice':
             if not libreoffice_module_available:
                 print("ERROR: LibreOffice conversion requested but libreoffice_docx_to_pdf.py module not found.")
                 print("Please ensure libreoffice_docx_to_pdf.py is in the same directory.")
-                if dependencies_ok:
+                if word_conversion_available and dependencies_ok:
                     print("Falling back to Word conversion.")
                     conversion_engine = 'word'
                 else:
@@ -122,7 +132,7 @@ def main():
             elif not libreoffice_installed:
                 print("ERROR: LibreOffice conversion requested but LibreOffice is not installed or not found.")
                 print("Please install LibreOffice and ensure it's in the system PATH.")
-                if dependencies_ok:
+                if word_conversion_available and dependencies_ok:
                     print("Falling back to Word conversion.")
                     conversion_engine = 'word'
                 else:
@@ -130,7 +140,7 @@ def main():
                     sys.exit(1)
         
         # If using Word conversion, ensure dependencies are installed
-        if conversion_engine == 'word' and not dependencies_ok:
+        if conversion_engine == 'word' and (not word_conversion_available or not dependencies_ok):
             if libreoffice_available:
                 print("\nSwitching to LibreOffice conversion engine due to missing dependencies for Word.")
                 conversion_engine = 'libreoffice'
