@@ -56,7 +56,3 @@ try:
     print("Email sent successfully!")
 except Exception as e:
     print(f"Error sending email: {str(e)}")
-    print("\nCommon SMTP ports:")
-    print("587 - TLS (most common for authenticated SMTP)")
-    print("465 - SSL (legacy, not recommended)")
-    print("25  - Default SMTP port (commonly used by SMTP relays)") 
