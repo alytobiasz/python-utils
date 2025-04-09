@@ -225,6 +225,10 @@ def fill_docx_templates(config):
         # Create output directory if it doesn't exist
         os.makedirs(output_directory, exist_ok=True)
         
+        # Verify template file exists
+        if not os.path.exists(word_template):
+            raise FileNotFoundError(f"Word template file not found: {word_template}")
+        
         # Load the template to find fields
         template_doc = Document(word_template)
         template_fields = find_fields_in_document(template_doc)
