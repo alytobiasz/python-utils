@@ -4,8 +4,8 @@
 """
 DOCX Template Filler
 
-This script replaces bracketed fields in a Word (.docx) document with values from an Excel file.
-For example, it will replace [First Name] or [First_Name] with "John" based on Excel data.
+This script replaces fields in a Word (.docx) document with values from an Excel file.
+By default, it uses bracketed fields like [First Name] but delimiters are configurable.
 
 Requirements:
     - Python 3.6 or higher
@@ -15,16 +15,17 @@ Requirements:
 
 Usage:
     1. Prepare your files:
-       - DOCX template: Use bracketed fields like [Field Name] where you want replacements
-       - Excel file: First row should contain headers matching the bracketed field names
-         (without the brackets). For example, if [First Name] is in the document,
-         the Excel should have a column header "First Name"
+       - DOCX template: Use fields like [Field Name] where you want replacements (default format)
+       - Excel file: First row should contain headers matching the field names (without delimiters)
+         For example, if [First Name] is in the document, the Excel should have a column header "First Name"
        - Config file: Text file with the following format:
             excel_file = path/to/data.xlsx
             template = path/to/template.docx
             output_directory = path/to/output
             filename_field1 = First Name  # Optional - uses timestamp if both fields omitted
             filename_field2 = Last Name   # Optional - uses timestamp if both fields omitted
+            left_delimiter = [            # Optional - default is square bracket '['
+            right_delimiter = ]           # Optional - default is square bracket ']'
 
     2. Run the script:
        python docx_template_filler.py <config_file>
@@ -33,10 +34,11 @@ Usage:
        python docx_template_filler.py config.txt
 
 Note:
-    - Field names in the document must match Excel headers exactly (excluding brackets)
+    - Field names in the document must match Excel headers exactly (excluding delimiters)
     - Fields are case-sensitive: [First_Name] ≠ [first_name]
     - Output files will be named using the specified filename fields (or timestamp if omitted)
     - All dates are formatted as "January 1, 2025" for better readability
+    - Delimiters can be customized (e.g., {{field}}, <<field>>, or any other pattern)
 """
 
 import sys
@@ -65,18 +67,23 @@ def normalize_field_name(name):
     with_underscores = name.replace(' ', '_')
     return list(set([name, with_spaces, with_underscores]))
 
-def find_fields_in_document(doc):
+def find_fields_in_document(doc, left_delimiter='[', right_delimiter=']'):
     """
-    Find all bracketed fields in the Word document.
+    Find all delimited fields in the Word document.
     
     Args:
         doc: Word document object
+        left_delimiter: Left delimiter character(s)
+        right_delimiter: Right delimiter character(s)
         
     Returns:
-        set: Set of unique field names found (without brackets)
+        set: Set of unique field names found (without delimiters)
     """
     fields = set()
-    pattern = r'\[([^\]]+)\]'
+    # Escape special regex characters in delimiters
+    left_esc = re.escape(left_delimiter)
+    right_esc = re.escape(right_delimiter)
+    pattern = f"{left_esc}([^{right_esc}]+){right_esc}"
     
     # Search in paragraphs
     for paragraph in doc.paragraphs:
@@ -92,13 +99,15 @@ def find_fields_in_document(doc):
     
     return fields
 
-def replace_fields_in_document(doc, data):
+def replace_fields_in_document(doc, data, left_delimiter='[', right_delimiter=']'):
     """
-    Replace all bracketed fields with corresponding values while preserving formatting.
+    Replace all delimited fields with corresponding values while preserving formatting.
     
     Args:
         doc: Word document object
         data (dict): Dictionary of field names and their values
+        left_delimiter: Left delimiter character(s)
+        right_delimiter: Right delimiter character(s)
     """
     # Create a mapping of all possible field variations
     field_mapping = {}
@@ -109,29 +118,33 @@ def replace_fields_in_document(doc, data):
     
     # Process paragraphs
     for paragraph in doc.paragraphs:
-        replace_fields_in_paragraph(paragraph, field_mapping)
+        replace_fields_in_paragraph(paragraph, field_mapping, left_delimiter, right_delimiter)
     
     # Process tables
     for table in doc.tables:
         for row in table.rows:
             for cell in row.cells:
                 for paragraph in cell.paragraphs:
-                    replace_fields_in_paragraph(paragraph, field_mapping)
+                    replace_fields_in_paragraph(paragraph, field_mapping, left_delimiter, right_delimiter)
 
-def replace_fields_in_paragraph(paragraph, field_mapping):
+def replace_fields_in_paragraph(paragraph, field_mapping, left_delimiter='[', right_delimiter=']'):
     """
     Replace fields in a paragraph while preserving formatting.
     
     Args:
         paragraph: Paragraph object
         field_mapping (dict): Dictionary mapping field names to values
+        left_delimiter: Left delimiter character(s)
+        right_delimiter: Right delimiter character(s)
     """
     # Check if paragraph contains any fields
-    if not any(f"[{field}]" in paragraph.text for field in field_mapping):
+    if not any(f"{left_delimiter}{field}{right_delimiter}" in paragraph.text for field in field_mapping):
         return
     
     # First, collect all field patterns that need to be replaced
-    pattern = r'\[([^\]]+)\]'
+    left_esc = re.escape(left_delimiter)
+    right_esc = re.escape(right_delimiter)
+    pattern = f"{left_esc}([^{right_esc}]+){right_esc}"
     field_matches = list(re.finditer(pattern, paragraph.text))
     
     # If no matches, return
@@ -141,9 +154,10 @@ def replace_fields_in_paragraph(paragraph, field_mapping):
     # Process each run, preserving formatting
     for run_index, run in enumerate(paragraph.runs):
         for field_name, value in field_mapping.items():
-            if f"[{field_name}]" in run.text:
+            field_with_delimiters = f"{left_delimiter}{field_name}{right_delimiter}"
+            if field_with_delimiters in run.text:
                 # Replace the field while preserving the run's formatting
-                run.text = run.text.replace(f"[{field_name}]", str(value))
+                run.text = run.text.replace(field_with_delimiters, str(value))
     
     # Check if any fields were broken across runs and fix them
     # This happens when a field like [First Name] is split across multiple runs
@@ -210,6 +224,8 @@ def fill_docx_templates(config):
             - output_directory: Directory for output files
             - filename_field1: Optional field for filename generation
             - filename_field2: Optional field for filename generation
+            - left_delimiter: Optional character(s) to mark field start (default: '[')
+            - right_delimiter: Optional character(s) to mark field end (default: ']')
         
     Returns:
         tuple: (success_count, total_files) indicating number of successfully processed files
@@ -224,6 +240,12 @@ def fill_docx_templates(config):
     output_directory = config['output_directory']
     filename_field1 = config.get('filename_field1', '')
     filename_field2 = config.get('filename_field2', '')
+    
+    # Get delimiter configuration with defaults
+    left_delimiter = config.get('left_delimiter', '[')
+    right_delimiter = config.get('right_delimiter', ']')
+    
+    print(f"Using field delimiters: '{left_delimiter}' and '{right_delimiter}'")
     
     # Create output directory if it doesn't exist
     os.makedirs(output_directory, exist_ok=True)
@@ -245,7 +267,7 @@ def fill_docx_templates(config):
             raise ValueError(f"Invalid or corrupted Word document: {word_template}")
         raise
     
-    template_fields = find_fields_in_document(template_doc)
+    template_fields = find_fields_in_document(template_doc, left_delimiter, right_delimiter)
     print(f"\nFound {len(template_fields)} unique fields in Word template:")
     print(", ".join(sorted(template_fields)))
     
@@ -316,7 +338,7 @@ def fill_docx_templates(config):
             
             # Create and save the filled document
             doc = Document(word_template)
-            replace_fields_in_document(doc, data)
+            replace_fields_in_document(doc, data, left_delimiter, right_delimiter)
             doc.save(docx_path)
             
             success_count += 1
