@@ -136,10 +136,15 @@ def read_config(config_path, required_fields=None):
         dict: Configuration parameters
         
     Raises:
+        FileNotFoundError: If config file doesn't exist
         ValueError: If required fields are missing or file cannot be read
     """
     if required_fields is None:
         required_fields = ['excel_file', 'template', 'output_directory']
+    
+    # Check if the config file exists
+    if not os.path.exists(config_path):
+        raise FileNotFoundError(f"Config file not found: {config_path}")
         
     config = {}
     

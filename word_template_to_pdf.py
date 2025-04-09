@@ -27,6 +27,7 @@ import os
 import platform
 import time
 import subprocess
+import traceback
 from datetime import datetime
 
 # Import the shared utility function for reading config files
@@ -95,7 +96,12 @@ def main():
         total_start_time = time.time()
         
         # Read configuration
-        config = read_config(sys.argv[1])
+        try:
+            config = read_config(sys.argv[1])
+        except (FileNotFoundError, ValueError) as e:
+            print(f"Configuration error: {str(e)}")
+            sys.exit(1)
+            
         base_output_dir = config['output_directory']
         keep_word = config.get('keep_word_file', '').lower() == 'true'
         
@@ -195,17 +201,35 @@ def main():
         
         # Step 1: Fill templates to create Word documents
         print("\nStep 1: Generating Word documents...")
-        docx_success, docx_total = fill_docx_templates(config)
+        try:
+            docx_success, docx_total = fill_docx_templates(config)
+        except FileNotFoundError as e:
+            # For file not found errors, show a clean error and exit
+            print(f"Error: {str(e)}")
+            sys.exit(1)
+        except ValueError as e:
+            # For validation errors, show a clean error and exit
+            print(f"Error: {str(e)}")
+            sys.exit(1)
+        except Exception as e:
+            # For unexpected errors, show the error and traceback
+            print(f"Unexpected error during document generation: {str(e)}")
+            traceback.print_exc()
+            sys.exit(1)
         
         # Step 2: Convert Word documents to PDF using selected engine
         print(f"\nStep 2: Converting to PDF using {conversion_engine.capitalize()}...")
         if conversion_engine == 'libreoffice':
-            pdf_success, pdf_total = create_pdfs_libreoffice(output_dir, output_dir, max_workers=max_workers)
+            try:
+                pdf_success, pdf_total = create_pdfs_libreoffice(output_dir, output_dir, max_workers=max_workers)
+            except Exception as e:
+                print(f"Error during PDF conversion with LibreOffice: {str(e)}")
+                sys.exit(1)
         else:  # default to Word
             try:
                 pdf_success, pdf_total = docx_to_pdf.create_pdfs(output_dir, output_dir, max_workers=max_workers)
             except Exception as e:
-                print(f"Error during PDF conversion: {str(e)}")
+                print(f"Error during PDF conversion with Word: {str(e)}")
                 sys.exit(1)
         
         # Clean up Word files if not keeping them
@@ -231,9 +255,8 @@ def main():
             print(f"Word files directory: {os.path.abspath(output_dir)}")
         
     except Exception as e:
+        # Catch-all for any other unexpected errors
         print(f"Error: {str(e)}")
-        import traceback
-        traceback.print_exc()
         sys.exit(1)
 
 if __name__ == "__main__":

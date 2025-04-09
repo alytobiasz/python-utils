@@ -213,117 +213,125 @@ def fill_docx_templates(config):
         
     Returns:
         tuple: (success_count, total_files) indicating number of successfully processed files
+        
+    Raises:
+        FileNotFoundError: If the template or Excel file doesn't exist
+        ValueError: If there are fields in the template not found in Excel
     """
+    # Extract configuration
+    excel_file = config['excel_file']
+    word_template = config['template']
+    output_directory = config['output_directory']
+    filename_field1 = config.get('filename_field1', '')
+    filename_field2 = config.get('filename_field2', '')
+    
+    # Create output directory if it doesn't exist
+    os.makedirs(output_directory, exist_ok=True)
+    
+    # Verify template file exists
+    if not os.path.exists(word_template):
+        raise FileNotFoundError(f"Word template file not found: {word_template}")
+        
+    # Verify Excel file exists
+    if not os.path.exists(excel_file):
+        raise FileNotFoundError(f"Excel file not found: {excel_file}")
+    
+    # Load the template to find fields
     try:
-        # Extract configuration
-        excel_file = config['excel_file']
-        word_template = config['template']
-        output_directory = config['output_directory']
-        filename_field1 = config.get('filename_field1', '')
-        filename_field2 = config.get('filename_field2', '')
-        
-        # Create output directory if it doesn't exist
-        os.makedirs(output_directory, exist_ok=True)
-        
-        # Verify template file exists
-        if not os.path.exists(word_template):
-            raise FileNotFoundError(f"Word template file not found: {word_template}")
-        
-        # Load the template to find fields
         template_doc = Document(word_template)
-        template_fields = find_fields_in_document(template_doc)
-        print(f"\nFound {len(template_fields)} unique fields in Word template:")
-        print(", ".join(sorted(template_fields)))
-        
-        # Read Excel data
-        wb = load_workbook(filename=excel_file, data_only=True)
-        ws = wb.active
-        headers = [cell.value for cell in ws[1]]
-        
-        # Verify all template fields exist in Excel headers
-        missing_fields = []
-        for field in template_fields:
-            field_variations = normalize_field_name(field)
-            if not any(var in headers for var in field_variations):
-                missing_fields.append(field)
-        
-        if missing_fields:
-            raise ValueError(f"Fields in Word template not found in Excel headers: {', '.join(missing_fields)}")
-        
-        # Verify filename fields exist in headers if specified
-        if filename_field1:
-            variations1 = normalize_field_name(filename_field1)
-            if not any(var in headers for var in variations1):
-                raise ValueError(f"Specified filename field '{filename_field1}' not found in Excel headers")
-            filename_field1 = next(var for var in variations1 if var in headers)
-            
-        if filename_field2:
-            variations2 = normalize_field_name(filename_field2)
-            if not any(var in headers for var in variations2):
-                raise ValueError(f"Specified filename field '{filename_field2}' not found in Excel headers")
-            filename_field2 = next(var for var in variations2 if var in headers)
-        
-        if not filename_field1 and not filename_field2:
-            print("No filename fields specified - using timestamps for output files")
-        
-        # Count total non-empty rows
-        total_files = sum(1 for row in ws.iter_rows(min_row=2) if any(cell.value for cell in row))
-        processed_count = 0
-        success_count = 0
-        
-        # Process each row
-        for row_cells in ws.iter_rows(min_row=2):
-            row = [cell.value for cell in row_cells]
-            if not any(row):  # Skip empty rows
-                continue
-            
-            processed_count += 1
-            start_time = time.time()
-            
-            try:
-                # Create data dictionary
-                data = {headers[i]: format_excel_cell_date(cell) for i, cell in enumerate(row_cells)}
-                
-                # Generate output filename from specified fields
-                if filename_field1 or filename_field2:
-                    field1_value = data.get(filename_field1, '').strip()
-                    field2_value = data.get(filename_field2, '').strip()
-                    filename = f"{field1_value} {field2_value}".strip()
-                else:
-                    # Use timestamp if no fields specified
-                    filename = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
-                
-                # Sanitize filename
-                filename = sanitize_filename(filename)
-                
-                # Create output path and handle duplicates
-                base_path = os.path.join(output_directory, filename)
-                docx_path = get_unique_filename(base_path, "docx")
-                
-                # Create and save the filled document
-                doc = Document(word_template)
-                replace_fields_in_document(doc, data)
-                doc.save(docx_path)
-                
-                success_count += 1
-                elapsed_time = time.time() - start_time
-                print(f"Processed {processed_count}/{total_files}: {os.path.basename(docx_path)} in {elapsed_time:.1f} seconds")
-                
-            except Exception as e:
-                print(f"Error processing row {processed_count}: {str(e)}")
-                traceback.print_exc()
-        
-        # Print summary
-        print("\nProcessing Summary:")
-        print(f"Total files processed: {success_count}/{total_files}")
-        print(f"Output directory: {os.path.abspath(output_directory)}")
-        
-        return success_count, total_files
-        
     except Exception as e:
-        print(f"Error: {str(e)}")
-        traceback.print_exc()
-        sys.exit(1)
+        # Convert cryptic "Package not found" error to something more meaningful
+        if "Package not found" in str(e):
+            raise ValueError(f"Invalid or corrupted Word document: {word_template}")
+        raise
+    
+    template_fields = find_fields_in_document(template_doc)
+    print(f"\nFound {len(template_fields)} unique fields in Word template:")
+    print(", ".join(sorted(template_fields)))
+    
+    # Read Excel data
+    wb = load_workbook(filename=excel_file, data_only=True)
+    ws = wb.active
+    headers = [cell.value for cell in ws[1]]
+    
+    # Verify all template fields exist in Excel headers
+    missing_fields = []
+    for field in template_fields:
+        field_variations = normalize_field_name(field)
+        if not any(var in headers for var in field_variations):
+            missing_fields.append(field)
+    
+    if missing_fields:
+        raise ValueError(f"Fields in Word template not found in Excel headers: {', '.join(missing_fields)}")
+    
+    # Verify filename fields exist in headers if specified
+    if filename_field1:
+        variations1 = normalize_field_name(filename_field1)
+        if not any(var in headers for var in variations1):
+            raise ValueError(f"Specified filename field '{filename_field1}' not found in Excel headers")
+        filename_field1 = next(var for var in variations1 if var in headers)
+        
+    if filename_field2:
+        variations2 = normalize_field_name(filename_field2)
+        if not any(var in headers for var in variations2):
+            raise ValueError(f"Specified filename field '{filename_field2}' not found in Excel headers")
+        filename_field2 = next(var for var in variations2 if var in headers)
+    
+    if not filename_field1 and not filename_field2:
+        print("No filename fields specified - using timestamps for output files")
+    
+    # Count total non-empty rows
+    total_files = sum(1 for row in ws.iter_rows(min_row=2) if any(cell.value for cell in row))
+    processed_count = 0
+    success_count = 0
+    
+    # Process each row
+    for row_cells in ws.iter_rows(min_row=2):
+        row = [cell.value for cell in row_cells]
+        if not any(row):  # Skip empty rows
+            continue
+        
+        processed_count += 1
+        start_time = time.time()
+        
+        try:
+            # Create data dictionary
+            data = {headers[i]: format_excel_cell_date(cell) for i, cell in enumerate(row_cells)}
+            
+            # Generate output filename from specified fields
+            if filename_field1 or filename_field2:
+                field1_value = data.get(filename_field1, '').strip()
+                field2_value = data.get(filename_field2, '').strip()
+                filename = f"{field1_value} {field2_value}".strip()
+            else:
+                # Use timestamp if no fields specified
+                filename = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+            
+            # Sanitize filename
+            filename = sanitize_filename(filename)
+            
+            # Create output path and handle duplicates
+            base_path = os.path.join(output_directory, filename)
+            docx_path = get_unique_filename(base_path, "docx")
+            
+            # Create and save the filled document
+            doc = Document(word_template)
+            replace_fields_in_document(doc, data)
+            doc.save(docx_path)
+            
+            success_count += 1
+            elapsed_time = time.time() - start_time
+            print(f"Processed {processed_count}/{total_files}: {os.path.basename(docx_path)} in {elapsed_time:.1f} seconds")
+            
+        except Exception as e:
+            print(f"Error processing row {processed_count}: {str(e)}")
+    
+    # Print summary
+    print("\nProcessing Summary:")
+    print(f"Total files processed: {success_count}/{total_files}")
+    print(f"Output directory: {os.path.abspath(output_directory)}")
+    
+    return success_count, total_files
 
 def main():
     """Main function to handle command line arguments."""
