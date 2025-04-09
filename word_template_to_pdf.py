@@ -20,8 +20,6 @@ The config file format is the same as docx_template_filler.py, with additional o
     keep_word_file = false  # Optional - set to true to keep both .docx and .pdf
     conversion_engine = word  # Optional - 'word' or 'libreoffice' (default: 'word')
     max_threads = 1  # Optional - number of threads for PDF conversion (default: 1, recommended)
-    left_delimiter = [  # Optional - character(s) to mark field start (default: '[')
-    right_delimiter = ]  # Optional - character(s) to mark field end (default: ']')
 """
 
 import sys
