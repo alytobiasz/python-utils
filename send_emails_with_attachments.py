@@ -63,23 +63,27 @@ Note for Gmail Users:
     6. Use this password in the config file
 """
 
-import sys
-import os
-import smtplib
-import time
-import csv
-import threading
+# Standard library imports
 import concurrent.futures
-import socket
-import random
+import csv
 import logging
+import mimetypes
+import os
+import random
 import signal
+import smtplib
+import socket
+import sys
+import threading
+import time
 from datetime import datetime
 from email import encoders
+from email.mime.application import MIMEApplication
 from email.mime.base import MIMEBase
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
+
 
 # Thread-local storage for SMTP connections
 thread_local = threading.local()
@@ -424,30 +428,41 @@ def send_email(smtp_config, to_email, subject, body, attachment_paths, test_mode
     # Add body
     msg.attach(MIMEText(body, 'plain'))
     
-    # Add attachments
+     # Add attachments
     attachment_names = []
     attachment_errors = []
     for attachment_path in attachment_paths:
-        # Check if we should exit early
         if should_exit:
             logging.info(f"{progress[0] if progress else '?'}/{progress[1] if progress else '?'} Cancelling email to {to_email} due to user interrupt")
             return False
-            
+    
         try:
-            with open(attachment_path, 'rb') as f:
-                part = MIMEBase('application', 'octet-stream')
-                part.set_payload(f.read())
-            
-            encoders.encode_base64(part)
             filename = os.path.basename(attachment_path)
-            attachment_names.append(filename)
-            part.add_header(
-                'Content-Disposition',
-                f'attachment; filename= {filename}'
-            )
+            ctype, encoding = mimetypes.guess_type(attachment_path)
+    
+            if ctype is None or encoding is not None:
+                ctype = 'application/octet-stream'  # Fallback
+    
+            maintype, subtype = ctype.split('/', 1)
+    
+            with open(attachment_path, 'rb') as f:
+                if maintype == 'text':
+                    part = MIMEText(f.read().decode('utf-8'), _subtype=subtype)
+                elif maintype == 'image':
+                    part = MIMEImage(f.read(), _subtype=subtype)
+                elif maintype == 'audio':
+                    part = MIMEAudio(f.read(), _subtype=subtype)
+                else:
+                    part = MIMEBase(maintype, subtype)
+                    part.set_payload(f.read())
+                    encoders.encode_base64(part)
+    
+            part.add_header('Content-Disposition', f'attachment; filename="{filename}"')
             msg.attach(part)
+            attachment_names.append(filename)
+    
         except Exception as e:
-            error_msg = f"Error attaching file {os.path.basename(attachment_path)}: {e}"
+            error_msg = f"Error attaching file {filename}: {e}"
             attachment_errors.append(error_msg)
             # Continue with other attachments
     
