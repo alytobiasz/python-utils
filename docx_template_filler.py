@@ -300,8 +300,9 @@ def fill_docx_templates(config):
             
             # Generate output filename from specified fields
             if filename_field1 or filename_field2:
-                field1_value = data.get(filename_field1, '').strip()
-                field2_value = data.get(filename_field2, '').strip()
+                # Use empty string if the value is None or not in the data dictionary
+                field1_value = str(data.get(filename_field1) or '').strip()
+                field2_value = str(data.get(filename_field2) or '').strip()
                 filename = f"{field1_value} {field2_value}".strip()
             else:
                 # Use timestamp if no fields specified
@@ -324,7 +325,12 @@ def fill_docx_templates(config):
             print(f"Processed {processed_count}/{total_files}: {os.path.basename(docx_path)} in {elapsed_time:.1f} seconds")
             
         except Exception as e:
+            # Log the error
             print(f"Error processing row {processed_count}: {str(e)}")
+            print("Stack trace:")
+            traceback.print_exc()
+            # Re-raise the exception to propagate it
+            raise
     
     # Print summary
     print("\nProcessing Summary:")
