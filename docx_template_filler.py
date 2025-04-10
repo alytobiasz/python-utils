@@ -49,22 +49,6 @@ from openpyxl import load_workbook
 import traceback
 from utils import format_excel_cell_date, read_config, sanitize_filename, get_unique_filename
 
-def normalize_field_name(name):
-    """
-    Normalize field names by converting spaces to underscores and vice versa.
-    This allows matching both [First Name] and [First_Name] formats.
-    
-    Args:
-        name (str): Field name to normalize
-        
-    Returns:
-        list: List of possible field name variations
-    """
-    name = name.strip()
-    with_spaces = name.replace('_', ' ')
-    with_underscores = name.replace(' ', '_')
-    return list(set([name, with_spaces, with_underscores]))
-
 def find_fields_in_document(doc):
     """
     Find all bracketed fields in the Word document.
@@ -81,14 +65,16 @@ def find_fields_in_document(doc):
     # Search in paragraphs
     for paragraph in doc.paragraphs:
         matches = re.finditer(pattern, paragraph.text)
-        fields.update(match.group(1) for match in matches)
+        # Strip whitespace from field names
+        fields.update(match.group(1).strip() for match in matches)
     
     # Search in tables
     for table in doc.tables:
         for row in table.rows:
             for cell in row.cells:
                 matches = re.finditer(pattern, cell.text)
-                fields.update(match.group(1) for match in matches)
+                # Strip whitespace from field names
+                fields.update(match.group(1).strip() for match in matches)
     
     return fields
 
@@ -100,12 +86,12 @@ def replace_fields_in_document(doc, data):
         doc: Word document object
         data (dict): Dictionary of field names and their values
     """
-    # Create a mapping of all possible field variations
+    # Create a mapping of field names to values (strip whitespace from keys)
     field_mapping = {}
-    for key in data:
-        variations = normalize_field_name(key)
-        for variant in variations:
-            field_mapping[variant] = data[key] if data[key] is not None else ''
+    for key, value in data.items():
+        # Handle None keys
+        if key is not None:
+            field_mapping[key.strip()] = value if value is not None else ''
     
     # Process paragraphs
     for paragraph in doc.paragraphs:
@@ -126,12 +112,23 @@ def replace_fields_in_paragraph(paragraph, field_mapping):
         paragraph: Paragraph object
         field_mapping (dict): Dictionary mapping field names to values
     """
-    # Check if paragraph contains any fields
-    if not any(f"[{field}]" in paragraph.text for field in field_mapping):
+    # Pattern to find field placeholders
+    pattern = r'\[([^\]]+)\]'
+    
+    # Check if paragraph contains any fields that match our field_mapping
+    # If not, we can exit early
+    paragraph_has_fields = False
+    for match in re.finditer(pattern, paragraph.text):
+        # Get field name and strip whitespace
+        field_name = match.group(1).strip()
+        if field_name in field_mapping:
+            paragraph_has_fields = True
+            break
+            
+    if not paragraph_has_fields:
         return
     
-    # First, collect all field patterns that need to be replaced
-    pattern = r'\[([^\]]+)\]'
+    # Get all field matches in this paragraph
     field_matches = list(re.finditer(pattern, paragraph.text))
     
     # If no matches, return
@@ -140,10 +137,16 @@ def replace_fields_in_paragraph(paragraph, field_mapping):
     
     # Process each run, preserving formatting
     for run_index, run in enumerate(paragraph.runs):
-        for field_name, value in field_mapping.items():
-            if f"[{field_name}]" in run.text:
+        # Find all fields in this run
+        run_matches = list(re.finditer(pattern, run.text))
+        for match in run_matches:
+            # Get field name and strip whitespace
+            field_name = match.group(1).strip()
+            if field_name in field_mapping:
                 # Replace the field while preserving the run's formatting
-                run.text = run.text.replace(f"[{field_name}]", str(value))
+                field_text = match.group(0)  # The full field, e.g., "[First Name]"
+                value = field_mapping[field_name]
+                run.text = run.text.replace(field_text, str(value))
     
     # Check if any fields were broken across runs and fix them
     # This happens when a field like [First Name] is split across multiple runs
@@ -155,7 +158,7 @@ def replace_fields_in_paragraph(paragraph, field_mapping):
     split_fields = re.finditer(pattern, remaining_text)
     for match in split_fields:
         field_text = match.group(0)  # e.g., "[First Name]"
-        field_name = match.group(1)  # e.g., "First Name"
+        field_name = match.group(1).strip()  # e.g., "First Name"
         
         if field_name in field_mapping:
             # Find the starting run that contains the beginning of the field
@@ -182,7 +185,6 @@ def replace_fields_in_paragraph(paragraph, field_mapping):
                 
                 # If we found both start and end, and they're different (split across runs)
                 if start_run is not None and end_run is not None and start_run != end_run:
-                    # This is where we'll handle fields split across runs
                     # Record this split field for later processing
                     merged_runs.append((start_run, end_run, field_text, str(field_mapping[field_name])))
     
@@ -256,9 +258,11 @@ def fill_docx_templates(config):
     
     # Verify all template fields exist in Excel headers
     missing_fields = []
+    # Strip whitespace from all headers for consistent comparison
+    stripped_headers = [h.strip() if h is not None else '' for h in headers]
+    
     for field in template_fields:
-        field_variations = normalize_field_name(field)
-        if not any(var in headers for var in field_variations):
+        if field not in stripped_headers:
             missing_fields.append(field)
     
     if missing_fields:
@@ -266,16 +270,17 @@ def fill_docx_templates(config):
     
     # Verify filename fields exist in headers if specified
     if filename_field1:
-        variations1 = normalize_field_name(filename_field1)
-        if not any(var in headers for var in variations1):
+        filename_field1 = filename_field1.strip()
+        if filename_field1 not in stripped_headers:
             raise ValueError(f"Specified filename field '{filename_field1}' not found in Excel headers")
-        filename_field1 = next(var for var in variations1 if var in headers)
         
     if filename_field2:
-        variations2 = normalize_field_name(filename_field2)
-        if not any(var in headers for var in variations2):
+        filename_field2 = filename_field2.strip()
+        if filename_field2 not in stripped_headers:
             raise ValueError(f"Specified filename field '{filename_field2}' not found in Excel headers")
-        filename_field2 = next(var for var in variations2 if var in headers)
+    
+    # Create a mapping from stripped headers to original headers
+    header_mapping = {h.strip() if h is not None else '': h for h in headers}
     
     if not filename_field1 and not filename_field2:
         print("No filename fields specified - using timestamps for output files")
@@ -296,7 +301,12 @@ def fill_docx_templates(config):
         
         try:
             # Create data dictionary
-            data = {headers[i]: format_excel_cell_date(cell) for i, cell in enumerate(row_cells)}
+            data = {}
+            for i, cell in enumerate(row_cells):
+                if i < len(headers):
+                    header = headers[i]
+                    if header is not None:
+                        data[header.strip()] = format_excel_cell_date(cell)
             
             # Generate output filename from specified fields
             if filename_field1 or filename_field2:
