@@ -1,24 +1,21 @@
 """
-Database Query to CSV and Email
+SQL Query to CSV Report Generator
 
 This script:
 1. Connects to a database
 2. Runs a SQL query
 3. Exports the results to a CSV file
-4. Emails the CSV file to specified recipients
 
 Requirements:
     - Python 3.6+
     - Required packages:
         - sqlite3 (built-in) or another DB driver depending on your database
         - pandas (for easy data handling and CSV export)
-        - smtplib (built-in for sending emails)
-        - email (built-in for crafting email messages)
         - For MS SQL Server: pyodbc
         - For Oracle: oracledb
 
 Usage:
-    python email_sql_csv_report.py <config_file>
+    python create_sql_csv_report.py <config_file>
 
 Example config file:
 
@@ -46,29 +43,13 @@ db_type = sqlite  # sqlite, oracle, mssql
 # Query settings
 query_file = query.sql  # File containing the SQL query
 csv_output_dir = path/to/directory  # Where to save the CSV file
-
-# Email settings
-smtp_server = smtp.gmail.com
-smtp_port = 587
-use_tls = true
-use_auth = true
-smtp_username = your.email@gmail.com
-smtp_password = your_app_password
-from_email = sender@example.com
-recipients = recipient1@example.com, recipient2@example.com
-email_subject = Database Query Results
-email_body = Please find attached the results of the database query.
 """
 
 import sys
 import os
-import smtplib
-import traceback
-from datetime import datetime
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-from email.mime.application import MIMEApplication
 import logging
+from datetime import datetime
+import traceback
 
 # Import utility functions
 from utils import connect_to_database, run_query, export_to_csv, read_config
@@ -79,78 +60,10 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler(f"logs/email_sql_csv_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
+        logging.FileHandler(f"logs/sql_csv_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log")
     ]
 )
 logger = logging.getLogger(__name__)
-
-def send_email(config, attachment_file):
-    """
-    Send an email with the CSV file attached.
-    
-    Args:
-        config: Configuration dictionary
-        attachment_file: Path to the CSV file to attach
-    """
-    # Email server settings
-    smtp_server = config.get('smtp_server', '')
-    smtp_port = int(config.get('smtp_port', 25))
-    use_tls = config.get('use_tls', '').lower() == 'true'
-    use_auth = config.get('use_auth', '').lower() == 'true'
-    smtp_username = config.get('smtp_username', '')
-    smtp_password = config.get('smtp_password', '')
-    
-    # Email content
-    from_email = config.get('from_email', '')
-    recipients_str = config.get('recipients', '')
-    recipients = [r.strip() for r in recipients_str.split(',') if r.strip()]
-    subject = config.get('email_subject', 'Database Query Results')
-    body = config.get('email_body', 'Please find attached the results of the database query.')
-    
-    if not recipients:
-        logger.error("No recipients specified.")
-        raise ValueError("No recipients specified in the configuration.")
-    
-    try:
-        # Create message
-        msg = MIMEMultipart()
-        msg['From'] = from_email
-        msg['To'] = ', '.join(recipients)
-        msg['Subject'] = subject
-        
-        # Attach body text
-        msg.attach(MIMEText(body, 'plain'))
-        
-        # Attach CSV file
-        with open(attachment_file, 'rb') as file:
-            part = MIMEApplication(file.read(), Name=os.path.basename(attachment_file))
-        
-        # Add header
-        part['Content-Disposition'] = f'attachment; filename="{os.path.basename(attachment_file)}"'
-        msg.attach(part)
-        
-        # Connect to SMTP server and send email
-        logger.info(f"Connecting to SMTP server {smtp_server}:{smtp_port}")
-        server = smtplib.SMTP(smtp_server, smtp_port)
-        server.set_debuglevel(0)
-        
-        if use_tls:
-            logger.info("Starting TLS connection")
-            server.starttls()
-            
-        if use_auth:
-            logger.info(f"Logging in as {smtp_username}")
-            server.login(smtp_username, smtp_password)
-            
-        logger.info(f"Sending email to {len(recipients)} recipients")
-        server.sendmail(from_email, recipients, msg.as_string())
-        server.quit()
-        
-        logger.info("Email sent successfully")
-        
-    except Exception as e:
-        logger.error(f"Error sending email: {str(e)}")
-        raise
 
 def validate_config(config):
     """
@@ -162,7 +75,10 @@ def validate_config(config):
     Returns:
         bool: True if configuration is valid
     """
-    required_fields = ['query_file', 'csv_output_dir', 'smtp_server', 'from_email', 'recipients']
+    required_fields = []
+    
+    # Common required fields
+    required_fields.extend(['query_file', 'csv_output_dir'])
     
     # Database-specific required fields
     db_type = config.get('db_type', 'sqlite').lower()
@@ -191,7 +107,7 @@ def validate_config(config):
 def main():
     """Main function to orchestrate the process."""
     if len(sys.argv) != 2:
-        logger.error("Usage: python email_sql_csv_report.py <config_file>")
+        logger.error("Usage: python create_sql_csv_report.py <config_file>")
         sys.exit(1)
         
     config_file = sys.argv[1]
@@ -233,11 +149,7 @@ def main():
             logger.info(f"Exporting results to {csv_output}")
             csv_file = export_to_csv(df, csv_output, logger)
             
-            # Send email with attachment
-            logger.info("Sending email with CSV attachment")
-            send_email(config, csv_file)
-            
-            logger.info("Process completed successfully")
+            logger.info(f"Process completed successfully. CSV file saved to: {csv_file}")
             
         finally:
             # Close database connection

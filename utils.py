@@ -1,6 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
 """
 Utility functions for document processing scripts.
 
@@ -9,12 +6,16 @@ This module contains shared utility functions used by multiple document processi
 - pdf_form_filler.py
 - pdf_template_filler.py
 - word_template_to_pdf.py
+- create_sql_csv_report.py
+- email_sql_csv_report.py
 
 Functions include:
 - Common date formatting for consistent display of dates
 - Filename sanitization to ensure valid filenames
 - Configuration file reading with standardized error handling 
 - Unique filename generation to avoid overwrites
+- Database connection handling for multiple database types
+- CSV export functionality
 
 IMPORTANT: All scripts now require exact field name matches between Excel headers and PDF fields.
 No automatic normalization of field names is performed - field names are case-sensitive and 
@@ -24,6 +25,10 @@ space-sensitive.
 import datetime as dt
 import os
 import re
+import csv
+import logging
+import sqlite3
+import pandas as pd
 
 def format_date(value, include_time=True):
     """
@@ -189,3 +194,130 @@ def get_unique_filename(base_path, extension="pdf"):
         counter += 1
         
     return output_path 
+
+def connect_to_database(config, logger=None):
+    """
+    Connect to the database based on the configuration.
+    
+    Args:
+        config (dict): Configuration dictionary with database settings
+        logger (logging.Logger, optional): Logger for logging messages
+    
+    Returns:
+        connection: Database connection object
+    
+    Raises:
+        ValueError: If database type is not supported
+        Exception: If connection fails
+    """
+    if logger is None:
+        logger = logging.getLogger(__name__)
+        
+    db_type = config.get('db_type', 'sqlite').lower()
+    db_connection = config.get('db_connection', '')
+    
+    try:
+        if db_type == 'sqlite':
+            connection = sqlite3.connect(db_connection)
+            logger.info(f"Connected to SQLite database: {db_connection}")
+            
+        elif db_type == 'oracle':
+            try:
+                import oracledb
+                connection = oracledb.connect(user=config.get('db_user', ''),
+                                             password=config.get('db_password', ''),
+                                             dsn=config.get('db_connection', ''))
+                logger.info(f"Connected to Oracle database: {config.get('db_connection', '')}")
+            except ImportError:
+                logger.error("Oracle database support requires the oracledb package: pip install oracledb")
+                raise
+            
+        elif db_type == 'mssql':
+            try:
+                import pyodbc
+                # Build connection string
+                server = config.get('db_server', '')
+                port = config.get('db_port', '1433')
+                database = config.get('db_name', '')
+                driver = config.get('db_driver', 'ODBC Driver 17 for SQL Server')
+                
+                # Check if using Windows Authentication or SQL Server Authentication
+                use_win_auth = config.get('use_windows_auth', '').lower() == 'true'
+                
+                if use_win_auth:
+                    # Windows Authentication
+                    conn_str = f"DRIVER={{{driver}}};SERVER={server},{port};DATABASE={database};Trusted_Connection=yes;"
+                    logger.info("Using Windows Authentication for MS SQL Server")
+                else:
+                    # SQL Server Authentication
+                    username = config.get('db_user', '')
+                    password = config.get('db_password', '')
+                    conn_str = f"DRIVER={{{driver}}};SERVER={server},{port};DATABASE={database};UID={username};PWD={password}"
+                
+                # Use provided connection string if it exists
+                if db_connection:
+                    conn_str = db_connection
+                    
+                connection = pyodbc.connect(conn_str)
+                logger.info(f"Connected to MS SQL Server database: {database} on {server}")
+            except ImportError:
+                logger.error("MS SQL Server support requires the pyodbc package: pip install pyodbc")
+                raise
+            
+        else:
+            raise ValueError(f"Unsupported database type: {db_type}")
+            
+        return connection
+        
+    except Exception as e:
+        logger.error(f"Error connecting to {db_type} database: {str(e)}")
+        raise
+
+def run_query(connection, query, logger=None):
+    """
+    Run the SQL query and return the results as a pandas DataFrame.
+    
+    Args:
+        connection: Database connection object
+        query (str): SQL query string
+        logger (logging.Logger, optional): Logger for logging messages
+        
+    Returns:
+        pd.DataFrame: Results of the query
+    """
+    if logger is None:
+        logger = logging.getLogger(__name__)
+        
+    try:
+        df = pd.read_sql_query(query, connection)
+        logger.info(f"Query executed successfully. Retrieved {len(df)} rows.")
+        return df
+    except Exception as e:
+        logger.error(f"Error executing query: {str(e)}")
+        raise
+
+def export_to_csv(df, output_file, logger=None):
+    """
+    Export the DataFrame to a CSV file.
+    
+    Args:
+        df (pd.DataFrame): pandas DataFrame to export
+        output_file (str): Path to save the CSV file
+        logger (logging.Logger, optional): Logger for logging messages
+        
+    Returns:
+        str: Path to the saved CSV file
+    """
+    if logger is None:
+        logger = logging.getLogger(__name__)
+        
+    try:
+        # Create directory if it doesn't exist
+        os.makedirs(os.path.dirname(os.path.abspath(output_file)), exist_ok=True)
+        
+        df.to_csv(output_file, index=False, quoting=csv.QUOTE_MINIMAL)
+        logger.info(f"Data exported to CSV file: {output_file}")
+        return output_file
+    except Exception as e:
+        logger.error(f"Error exporting to CSV: {str(e)}")
+        raise 
