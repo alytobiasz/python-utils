@@ -24,13 +24,24 @@ Example config file:
 
 # Database settings
 db_type = sqlite  # sqlite, oracle, mssql
-db_connection = mydatabase.db  # SQLite filename or connection string for other DBs
-db_user = user
-db_password = password
-db_server = server_name  # For MS SQL Server
-db_port = 1433  # For MS SQL Server (default)
-db_name = database_name  # For MS SQL Server
-db_driver = ODBC Driver 17 for SQL Server  # For MS SQL Server
+
+# For SQLite:
+# db_connection = mydatabase.db  # Path to the database file
+
+# For Oracle:
+# db_connection = localhost:1521/ORCLPDB  # Format: host:port/service_name
+# db_user = oracle_user
+# db_password = oracle_password
+
+# For MS SQL Server:
+# db_server = server_name  # Hostname or IP address
+# db_port = 1433  # Default SQL Server port
+# db_name = database_name  # Name of the database
+# db_driver = ODBC Driver 17 for SQL Server  # ODBC driver name installed on your system
+# use_windows_auth = true  # Set to true for Windows Authentication (if false, provide db_user and db_password)
+
+# Alternative for MS SQL Server: Provide a complete connection string (this overrides individual settings above):
+# db_connection = Driver={ODBC Driver 17 for SQL Server};Server=server_name;Database=database_name;Trusted_Connection=yes;
 
 # Query settings
 query_file = query.sql  # File containing the SQL query
@@ -122,11 +133,20 @@ def connect_to_database(config):
             server = config.get('db_server', '')
             port = config.get('db_port', '1433')
             database = config.get('db_name', '')
-            username = config.get('db_user', '')
-            password = config.get('db_password', '')
             driver = config.get('db_driver', 'ODBC Driver 17 for SQL Server')
             
-            conn_str = f"DRIVER={{{driver}}};SERVER={server},{port};DATABASE={database};UID={username};PWD={password}"
+            # Check if using Windows Authentication or SQL Server Authentication
+            use_win_auth = config.get('use_windows_auth', '').lower() == 'true'
+            
+            if use_win_auth:
+                # Windows Authentication
+                conn_str = f"DRIVER={{{driver}}};SERVER={server},{port};DATABASE={database};Trusted_Connection=yes;"
+                logger.info("Using Windows Authentication for MS SQL Server")
+            else:
+                # SQL Server Authentication
+                username = config.get('db_user', '')
+                password = config.get('db_password', '')
+                conn_str = f"DRIVER={{{driver}}};SERVER={server},{port};DATABASE={database};UID={username};PWD={password}"
             
             # Use provided connection string if it exists
             if db_connection:
