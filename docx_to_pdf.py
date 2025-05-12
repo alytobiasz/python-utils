@@ -441,6 +441,7 @@ def create_pdfs(input_dir, pdf_dir=None, max_workers=1):
     
     try:
         # Verify directory exists
+        input_dir = os.path.abspath(input_dir)
         if not os.path.isdir(input_dir):
             raise ValueError(f"Directory not found: {input_dir}")
         
