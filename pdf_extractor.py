@@ -1,15 +1,14 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
 """
 PDF Text Extractor
 
 This script extracts text content from PDF files.
-Reads a text file containing PDF file paths (one per line) and processes each PDF,
-saving its text content to a separate output file in a timestamped directory.
+Can accept either:
+1. A text file containing PDF file paths (one per line), or
+2. A directory path containing PDF files
 
 Usage:
     python pdf_extractor.py path/to/your/list.txt
+    python pdf_extractor.py path/to/pdf/directory/
 
 Output:
     Creates a directory named 'pdf_extracts_YYYYMMDD_HHMMSS' containing all extracted text files
@@ -22,6 +21,7 @@ import argparse
 import time
 from datetime import datetime
 import os
+import glob
 import fitz  # PyMuPDF
 
 def extract_text_from_pdf_file(pdf_path):
@@ -39,10 +39,39 @@ def extract_text_from_pdf_file(pdf_path):
         print(f"Error processing PDF: {e}")
         return None
 
-def process_pdf_list(file_list_path):
+def get_pdf_paths_from_directory(directory_path):
+    """Get all PDF file paths from a directory."""
+    pdf_extensions = ['*.pdf', '*.PDF']
+    pdf_paths = []
+    
+    for extension in pdf_extensions:
+        pattern = os.path.join(directory_path, extension)
+        pdf_paths.extend(glob.glob(pattern))
+    
+    # Sort paths for consistent processing order
+    return sorted(pdf_paths)
+
+def get_pdf_paths_from_file(file_path):
+    """Get PDF file paths from a text file (one path per line)."""
+    with open(file_path, 'r') as file:
+        return [line.strip() for line in file if line.strip()]
+
+def process_pdfs(input_path):
+    """Process PDFs from either a directory or a file list."""
     try:
-        with open(file_list_path, 'r') as file:
-            pdf_paths = [line.strip() for line in file if line.strip()]
+        # Determine if input is a directory or file
+        if os.path.isdir(input_path):
+            print(f"Processing directory: {input_path}")
+            pdf_paths = get_pdf_paths_from_directory(input_path)
+            if not pdf_paths:
+                print(f"No PDF files found in directory: {input_path}")
+                return
+        elif os.path.isfile(input_path):
+            print(f"Processing file list: {input_path}")
+            pdf_paths = get_pdf_paths_from_file(input_path)
+        else:
+            print(f"Error: '{input_path}' is neither a valid file nor directory")
+            return
         
         # Create data directory if it doesn't exist
         if not os.path.exists('data'):
@@ -89,17 +118,17 @@ def process_pdf_list(file_list_path):
         print(f"All output files are in directory: {output_dir}")
         
     except FileNotFoundError:
-        print(f"Error: File list not found at '{file_list_path}'")
+        print(f"Error: File not found at '{input_path}'")
     except Exception as e:
-        print(f"Error processing file list: {e}")
+        print(f"Error processing input: {e}")
 
 def main():
     # Set up command line argument parsing
-    parser = argparse.ArgumentParser(description='Extract text from PDF files listed in a text file')
-    parser.add_argument('filepath', help='Path to a text file containing PDF paths (one per line)')
+    parser = argparse.ArgumentParser(description='Extract text from PDF files from a directory or file list')
+    parser.add_argument('input_path', help='Path to a directory containing PDFs or a text file containing PDF paths (one per line)')
     args = parser.parse_args()
     
-    process_pdf_list(args.filepath)
+    process_pdfs(args.input_path)
 
 if __name__ == "__main__":
     main() 
