@@ -48,8 +48,9 @@ def get_pdf_paths_from_directory(directory_path):
         pattern = os.path.join(directory_path, extension)
         pdf_paths.extend(glob.glob(pattern))
     
-    # Sort paths for consistent processing order
-    return sorted(pdf_paths)
+    # Remove duplicates (important for case-insensitive filesystems like Windows)
+    # and sort paths for consistent processing order
+    return sorted(list(set(pdf_paths)))
 
 def get_pdf_paths_from_file(file_path):
     """Get PDF file paths from a text file (one path per line)."""
