@@ -60,9 +60,11 @@ def process_pdfs(input_path):
     """Process PDFs from either a directory or a file list."""
     try:
         # Determine if input is a directory or file
+        is_directory_input = False
         if os.path.isdir(input_path):
             print(f"Processing directory: {input_path}")
             pdf_paths = get_pdf_paths_from_directory(input_path)
+            is_directory_input = True
             if not pdf_paths:
                 print(f"No PDF files found in directory: {input_path}")
                 return
@@ -95,11 +97,18 @@ def process_pdfs(input_path):
             extracted_text = extract_text_from_pdf_file(pdf_path)
             
             if extracted_text:
-                # Generate output filename from last 5 parts of the path
-                path_parts = pdf_path.replace('\\', '/').split('/')
-                last_parts = path_parts[-5:] if len(path_parts) >= 5 else path_parts
-                base_name = '-'.join(last_parts).rsplit('.', 1)[0]
-                output_filename = os.path.join(output_dir, f"{base_name}.txt")
+                # Generate output filename based on input type
+                if is_directory_input:
+                    # For directory input: use original filename with .txt extension
+                    pdf_filename = os.path.basename(pdf_path)
+                    base_name = os.path.splitext(pdf_filename)[0]
+                    output_filename = os.path.join(output_dir, f"{base_name}.txt")
+                else:
+                    # For file list input: use complex naming from last 5 parts of path
+                    path_parts = pdf_path.replace('\\', '/').split('/')
+                    last_parts = path_parts[-5:] if len(path_parts) >= 5 else path_parts
+                    base_name = '-'.join(last_parts).rsplit('.', 1)[0]
+                    output_filename = os.path.join(output_dir, f"{base_name}.txt")
                 
                 # Save to file
                 with open(output_filename, "w", encoding="utf-8") as f:
