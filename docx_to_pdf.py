@@ -448,6 +448,7 @@ def create_pdfs(input_dir, pdf_dir=None, max_workers=1):
         # Set up PDF output directory
         if pdf_dir is None:
             pdf_dir = os.path.join(input_dir, 'pdf_exports')
+        pdf_dir = os.path.abspath(pdf_dir)
         os.makedirs(pdf_dir, exist_ok=True)
         
         # Find all .docx files in the directory
